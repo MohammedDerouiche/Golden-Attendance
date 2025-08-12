@@ -1,0 +1,29 @@
+[33m61963a5[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Not working?????
+[33ma6e9602[m I investigated the website using the inpect tool in the borwser. I found
+[33md1950e6[m Can we get back to the code version where you first created the tasks pa
+[33m1ce57e2[m I think there is a problem with the website. Every page looks like a plo
+[33m8069afd[m Update the Tasks Page task creation form to improve recurring and one-ti
+[33m8382481[m I see this error with the app, reported by NextJS, please fix it. The er
+[33m1cc4ced[m Small Prompt – Tasks Page with Recurring & One-Time Tasks
+[33mf4c1c18[m Add a "Daily Work Goal Progress" section to the main attendance page to
+[33mf6327d0[m I want a way to show how much time worked today in the main page. Can yo
+[33me868204[m I see this error with the app, reported by NextJS, please fix it. The er
+[33m2603d53[m In the main page "Clock in and out" "/" rount. I want you to add a timer
+[33m55edaad[m when editing an attendance in history, the time needs to be entered manu
+[33m5c704f4[m When I hover over the graph, a black backgorund appears over the bar in
+[33mff9fd61[m I think there is a problem with the daily hours worked graph. can you ch
+[33m2cea484[m Add a new "Statistics" page to provide visual insights into attendance d
+[33mc3cd1d8[m Add a new page called "Active Employees" that is visible only to admin u
+[33m6258f44[m Enhance the History page with filter and search functionality to make br
+[33m2c054df[m I think we start having the same problem "window is not defined" so for
+[33m0dad5ef[m Update the geolocation feature (Small Prompt 8) so that when a user clic
+[33m604d1e0[m What about the latitude and longitude. Where are they saved??
+[33mc8f0b3d[m Add geolocation tracking when users clock in or clock out.
+[33m756667a[m Add the ability to export both attendance history and salary calculation
+[33m8819587[m Small Prompt 6 – Salary Calculation Page
+[33m2a97496[m Add the ability to delete attendance records from the attendance table.
+[33md08bde7[m Small Prompt 4 – Manual Clock-in/Clock-out Time Entry & Editing
+[33m5ce8a4e[m Add functionality to edit an existing user’s details in the users table.
+[33mcd89d73[m Add a new feature to allow removing a user from the users table.
+[33m60a83cb[m Initial prototype
+[33mef5f6bc[m Initialized workspace with Firebase Studio
