@@ -10,6 +10,9 @@ export type Json =
   | Json[]
 
 export type AttendanceStatus = 'present' | 'absent' | 'day_off';
+export type TaskStatus = 'not_started' | 'in_progress' | 'completed';
+export type TaskPriority = 'low' | 'medium' | 'high';
+export type TaskRecurrence = 'none' | 'daily' | 'weekly' | 'monthly' | 'custom_days';
 
 export interface Database {
   public: {
@@ -57,9 +60,10 @@ export interface Database {
           phone: string | null
           role: 'admin' | 'employee'
           position: string | null
-          hourly_rate: number | null
+          monthly_salary: number | null
           created_at: string
           daily_target_hours: number
+          friday_target_hours: number | null
           password: string | null
         }
         Insert: {
@@ -68,8 +72,9 @@ export interface Database {
           phone?: string | null
           role: 'admin' | 'employee'
           position?: string | null
-          hourly_rate?: number | null
+          monthly_salary?: number | null
           daily_target_hours?: number
+          friday_target_hours?: number | null
           password?: string | null
         }
         Update: {
@@ -78,9 +83,52 @@ export interface Database {
           phone?: string | null
           role?: 'admin' | 'employee'
           position?: string | null
-          hourly_rate?: number | null
+          monthly_salary?: number | null
           daily_target_hours?: number
+          friday_target_hours?: number | null
           password?: string | null
+        }
+      }
+      tasks: {
+        Row: {
+          id: string
+          title: string
+          description: string | null
+          status: TaskStatus
+          priority: TaskPriority
+          due_date: string | null
+          created_at: string
+          created_by: string
+          assigned_to: string[] | null
+          recurrence_type: TaskRecurrence
+          recurrence_interval: number | null
+          original_task_id: string | null
+        }
+        Insert: {
+          id?: string
+          title: string
+          description?: string | null
+          status?: TaskStatus
+          priority?: TaskPriority
+          due_date?: string | null
+          created_by: string
+          assigned_to?: string[] | null
+          recurrence_type?: TaskRecurrence
+          recurrence_interval?: number | null
+          original_task_id?: string | null
+        }
+        Update: {
+          id?: string
+          title?: string
+          description?: string | null
+          status?: TaskStatus
+          priority?: TaskPriority
+          due_date?: string | null
+          created_by?: string
+          assigned_to?: string[] | null
+          recurrence_type?: TaskRecurrence
+          recurrence_interval?: number | null
+          original_task_id?: string | null
         }
       }
     }
@@ -237,6 +285,52 @@ END;
 $function$;
 */
 
+// SQL to create the mark_day_off_for_user function:
+/*
+CREATE OR REPLACE FUNCTION public.mark_day_off_for_user(p_user_id uuid, p_paid_hours numeric)
+ RETURNS void
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    today_start timestamptz := date_trunc('day', now());
+    today_end timestamptz := date_trunc('day', now()) + interval '1 day' - interval '1 second';
+BEGIN
+    -- Delete any existing records for the user today
+    DELETE FROM public.attendance
+    WHERE user_id = p_user_id
+      AND time >= today_start
+      AND time <= today_end;
+
+    -- Insert the new day-off record, using the passed-in paid hours
+    INSERT INTO public.attendance (user_id, action, time, status, paid_hours, notes)
+    VALUES (p_user_id, 'in', now(), 'day_off', p_paid_hours, 'Full Day-Off (Paid)');
+END;
+$function$;
+*/
+
+// SQL to create the mark_absent_for_user function:
+/*
+CREATE OR REPLACE FUNCTION public.mark_absent_for_user(p_user_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    today_start timestamptz := date_trunc('day', now());
+    today_end timestamptz := date_trunc('day', now()) + interval '1 day' - interval '1 second';
+BEGIN
+    -- Delete any existing records for the user today
+    DELETE FROM public.attendance
+    WHERE user_id = p_user_id
+      AND time >= today_start
+      AND time <= today_end;
+
+    -- Insert the new absent record
+    INSERT INTO public.attendance (user_id, action, time, status, notes)
+    VALUES (p_user_id, 'in', now(), 'absent', 'Full Day - Absent');
+END;
+$function$;
+*/
+
 
 export type User = Database['public']['Tables']['users']['Row'];
 export type UserInsert = Database['public']['Tables']['users']['Insert'];
@@ -246,3 +340,12 @@ export type AttendanceInsert = Database['public']['Tables']['attendance']['Inser
 export type AttendanceUpdate = Database['public']['Tables']['attendance']['Update'];
 export type ActiveEmployee = Database['public']['Functions']['get_active_employees']['Returns'][number];
 export type TopEmployee = Database['public']['Functions']['get_top_employees_by_hours']['Returns'][number];
+
+export type Task = Omit<Database['public']['Tables']['tasks']['Row'], 'assigned_to'> & {
+    users_created_by: Pick<User, 'id' | 'name'> | null;
+    assigned_to: Pick<User, 'id' | 'name'>[] | null;
+};
+export type TaskInsert = Database['public']['Tables']['tasks']['Insert'];
+export type TaskUpdate = Database['public']['Tables']['tasks']['Update'];
+
+    

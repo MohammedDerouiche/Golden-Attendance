@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Settings as SettingsIcon } from 'lucide-react';
 
-
 export default function SettingsPage() {
     const { selectedUser, isLoading } = useSelectedUser();
 

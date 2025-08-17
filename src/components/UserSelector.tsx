@@ -1,6 +1,7 @@
+
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
 import { User, ChevronsUpDown, PlusCircle, LogOut, Trash2, Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -40,7 +41,16 @@ export default function UserSelector({ onAddNewUser, onEditUser }: UserSelectorP
   const [userToDelete, setUserToDelete] = useState<UserType | null>(null);
   const [passwordPromptUser, setPasswordPromptUser] = useState<UserType | null>(null);
   const [passwordInput, setPasswordInput] = useState('');
+  const passwordInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  
+  useEffect(() => {
+    if (passwordPromptUser) {
+      setTimeout(() => {
+        passwordInputRef.current?.focus();
+      }, 100);
+    }
+  }, [passwordPromptUser]);
 
   const handleSelectUser = (user: UserType) => {
     if (user.role === 'admin') {
@@ -57,6 +67,7 @@ export default function UserSelector({ onAddNewUser, onEditUser }: UserSelectorP
   const handlePasswordSubmit = () => {
     if (!passwordPromptUser) return;
 
+    // This is a simplified check. In a real app, use a secure method.
     if (passwordInput === passwordPromptUser.password) {
       setSelectedUser(passwordPromptUser);
       toast({
@@ -100,30 +111,35 @@ export default function UserSelector({ onAddNewUser, onEditUser }: UserSelectorP
   };
 
   if (isLoading) {
-    return <Button variant="outline" disabled>Loading users...</Button>;
+    return <Button variant="outline" disabled className="w-full">Loading users...</Button>;
   }
 
   if (error) {
-    return <Button variant="destructive" disabled>Error</Button>;
+    return <Button variant="destructive" disabled className="w-full">Error</Button>;
   }
 
   return (
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" className="w-[200px] justify-between">
+          <Button variant="outline" className="w-full justify-between">
             {selectedUser ? (
               <>
-                <span>{selectedUser.name}</span>
-                <span className="text-xs capitalize text-muted-foreground">{selectedUser.role}</span>
+                <span className="truncate">{selectedUser.name}</span>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs capitalize text-muted-foreground">{selectedUser.role}</span>
+                    <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                </div>
               </>
             ) : (
-              'Select User'
+                <>
+                Select User
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </>
             )}
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-[240px]" align="end">
+        <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width]" align="end">
           <DropdownMenuLabel>Switch User</DropdownMenuLabel>
           <DropdownMenuGroup>
             {users.map((user) => (
@@ -182,6 +198,7 @@ export default function UserSelector({ onAddNewUser, onEditUser }: UserSelectorP
             <Label htmlFor="password-input">Password</Label>
             <Input 
                 id="password-input"
+                ref={passwordInputRef}
                 type="password"
                 value={passwordInput}
                 onChange={(e) => setPasswordInput(e.target.value)}

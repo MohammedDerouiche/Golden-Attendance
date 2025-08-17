@@ -1,7 +1,7 @@
 
 'use client';
 
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell } from 'recharts';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell, ReferenceLine, Label } from 'recharts';
 import { format } from 'date-fns';
 
 interface ChartDataPoint {
@@ -13,6 +13,7 @@ interface ChartDataPoint {
 interface MonthlyHoursChartProps {
   data: ChartDataPoint[];
   dateRange: { from: Date; to: Date };
+  averageHours?: number;
 }
 
 const getBarColor = (status: string) => {
@@ -26,7 +27,7 @@ const getBarColor = (status: string) => {
     }
 };
 
-export default function MonthlyHoursChart({ data, dateRange }: MonthlyHoursChartProps) {
+export default function MonthlyHoursChart({ data, dateRange, averageHours }: MonthlyHoursChartProps) {
   return (
     <div className="h-[350px] w-full">
       <ResponsiveContainer>
@@ -49,6 +50,18 @@ export default function MonthlyHoursChart({ data, dateRange }: MonthlyHoursChart
                 <Cell key={`cell-${index}`} fill={getBarColor(entry.status)} />
             ))}
           </Bar>
+           {averageHours && averageHours > 0 && (
+                <ReferenceLine y={averageHours} stroke="hsl(var(--primary))" strokeDasharray="3 3" strokeWidth={2}>
+                    <Label 
+                        value={`Avg: ${averageHours.toFixed(2)}h`} 
+                        position="insideTopRight" 
+                        fill="hsl(var(--primary))" 
+                        fontSize={12} 
+                        dy={-10}
+                        dx={-10}
+                    />
+                </ReferenceLine>
+            )}
         </BarChart>
       </ResponsiveContainer>
     </div>

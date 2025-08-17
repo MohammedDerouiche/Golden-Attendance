@@ -25,8 +25,9 @@ const userSchema = z.object({
   phone: z.string().optional().nullable(),
   role: z.enum(['employee', 'admin']),
   position: z.string().optional().nullable(),
-  hourly_rate: z.coerce.number().positive().optional().nullable(),
+  monthly_salary: z.coerce.number().positive().optional().nullable(),
   daily_target_hours: z.coerce.number().min(1, {message: 'Target must be at least 1 hour'}).max(24, {message: 'Target cannot exceed 24 hours'}),
+  friday_target_hours: z.coerce.number().min(0).max(24).optional().nullable(),
   password: z.string().optional().nullable(),
 });
 
@@ -48,8 +49,9 @@ export default function AddUserForm({ onFinished, defaultValues }: AddUserFormPr
       phone: defaultValues?.phone || '',
       role: defaultValues?.role || 'employee',
       position: defaultValues?.position || '',
-      hourly_rate: defaultValues?.hourly_rate || undefined,
+      monthly_salary: defaultValues?.monthly_salary || undefined,
       daily_target_hours: defaultValues?.daily_target_hours || 8,
+      friday_target_hours: defaultValues?.friday_target_hours || undefined,
       password: '', // Always start empty, never show old password
     },
   });
@@ -73,8 +75,9 @@ export default function AddUserForm({ onFinished, defaultValues }: AddUserFormPr
             phone: values.phone,
             role: values.role,
             position: values.position,
-            hourly_rate: values.hourly_rate,
+            monthly_salary: values.monthly_salary,
             daily_target_hours: values.daily_target_hours,
+            friday_target_hours: values.friday_target_hours,
         };
 
         // Only include password in update if a new one was typed
@@ -202,20 +205,20 @@ export default function AddUserForm({ onFinished, defaultValues }: AddUserFormPr
             </FormItem>
           )}
         />
-        <div className="grid grid-cols-2 gap-4">
-            <FormField
+        <FormField
             control={form.control}
-            name="hourly_rate"
+            name="monthly_salary"
             render={({ field }) => (
                 <FormItem>
-                <FormLabel>Hourly Rate (Optional)</FormLabel>
+                <FormLabel>Monthly Salary (Optional)</FormLabel>
                 <FormControl>
-                    <Input type="number" placeholder="25.50" {...field} value={field.value ?? ''} />
+                    <Input type="number" placeholder="5000" {...field} value={field.value ?? ''} />
                 </FormControl>
                 <FormMessage />
                 </FormItem>
             )}
             />
+        <div className="grid grid-cols-2 gap-4">
             <FormField
             control={form.control}
             name="daily_target_hours"
@@ -228,6 +231,19 @@ export default function AddUserForm({ onFinished, defaultValues }: AddUserFormPr
                 <FormMessage />
                 </FormItem>
             )}
+            />
+            <FormField
+                control={form.control}
+                name="friday_target_hours"
+                render={({ field }) => (
+                    <FormItem>
+                    <FormLabel>Friday Target (Hours)</FormLabel>
+                    <FormControl>
+                        <Input type="number" placeholder="e.g. 3.75" {...field} value={field.value ?? ''} />
+                    </FormControl>
+                    <FormMessage />
+                    </FormItem>
+                )}
             />
         </div>
         <Button type="submit" disabled={form.formState.isSubmitting} className="w-full">

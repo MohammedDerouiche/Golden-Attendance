@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -7,12 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getAttendanceForUser } from '@/lib/supabase/api';
-import type { Attendance, User } from '@/lib/supabase/types';
+import { getAttendanceForUser, getTasks } from '@/lib/supabase/api';
+import type { Attendance, Task, User } from '@/lib/supabase/types';
 import { subMonths, startOfMonth, endOfMonth, format, getDaysInMonth, eachDayOfInterval } from 'date-fns';
 import MonthlyHoursChart from '@/components/charts/MonthlyHoursChart';
 import TopEmployeesChart from '@/components/charts/TopEmployeesChart';
 import AttendanceHeatmap from '@/components/charts/AttendanceHeatmap';
+import TaskStatusPieChart from '@/components/charts/TaskStatusPieChart';
 import { Check, X, CalendarOff, Clock } from 'lucide-react';
 
 // Helper function to calculate total hours from attendance records
@@ -75,10 +77,15 @@ export default function StatisticsPage() {
   };
 
   const targetUserId = currentUser?.role === 'admin' ? (viewingUserId || currentUser.id) : currentUser?.id;
-
+  
   const { data: attendance, isLoading: isAttendanceLoading } = useSWR(
     targetUserId ? ['attendance', targetUserId, dateRange.from, dateRange.to] : null,
     () => getAttendanceForUser(targetUserId!, dateRange.from, dateRange.to)
+  );
+
+  const { data: tasks, isLoading: isTasksLoading } = useSWR(
+    targetUserId ? ['tasks', targetUserId, currentUser?.role, dateRange] : null,
+    () => getTasks(targetUserId!, currentUser!.role === 'admin', {}, dateRange)
   );
 
   const dailyHours = useMemo(() => {
@@ -98,7 +105,7 @@ export default function StatisticsPage() {
     return daysInMonth.map((day) => {
       const formattedDayKey = format(day, 'yyyy-MM-dd');
       const hours = dailyHours[formattedDayKey] || 0;
-      const status = heatmapData[formattedDayKey]?.status || (hours > 0 ? 'worked' : 'absent');
+      const status = heatmapData[formattedDayKey]?.status || (hours > 0 ? 'absent' : 'absent');
       return {
         name: format(day, 'dd'),
         hours: parseFloat(hours.toFixed(2)),
@@ -154,7 +161,8 @@ export default function StatisticsPage() {
     );
   }
 
-  const isLoading = isUserLoading || isAttendanceLoading;
+  const isLoading = isUserLoading || isAttendanceLoading || isTasksLoading;
+  const monthName = format(dateRange.from, 'MMMM yyyy');
 
   return (
     <div className="container mx-auto p-4 md:p-8">
@@ -192,70 +200,81 @@ export default function StatisticsPage() {
           </div>
       </div>
       
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-            <Card>
-                <CardHeader>
-                    <CardTitle>Daily Hours Worked</CardTitle>
-                    <CardDescription>Total hours worked each day in {format(dateRange.from, 'MMMM yyyy')}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {isLoading ? <Skeleton className="h-[350px] w-full" /> : <MonthlyHoursChart data={monthlyChartData} dateRange={dateRange} />}
-                </CardContent>
-            </Card>
-        </div>
-        
-        <div className="lg:col-span-1 space-y-6">
-            <Card>
-                <CardHeader>
-                    <CardTitle>Attendance Calendar</CardTitle>
-                    <CardDescription>Status for each day in {format(dateRange.from, 'MMMM yyyy')}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {isLoading ? <Skeleton className="h-[300px] w-full" /> : <AttendanceHeatmap data={heatmapData} month={dateRange.from} />}
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>Monthly Summary</CardTitle>
-                    <CardDescription>Total counts for the selected month.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    {isLoading ? <Skeleton className="h-24 w-full" /> : (
-                        <div className="space-y-2 text-sm">
-                            <div className="flex justify-between items-center">
-                                <span className="flex items-center text-green-600"><Check className="mr-2 h-4 w-4" /> Worked Days</span>
-                                <span className="font-bold">{attendanceSummary.worked}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="flex items-center text-yellow-600"><CalendarOff className="mr-2 h-4 w-4" /> Days-Off</span>
-                                <span className="font-bold">{attendanceSummary.day_off}</span>
-                            </div>
-                             <div className="flex justify-between items-center">
-                                <span className="flex items-center text-red-600"><X className="mr-2 h-4 w-4" /> Absent Days</span>
-                                <span className="font-bold">{attendanceSummary.absent}</span>
-                            </div>
-                            <div className="flex justify-between items-center border-t pt-2 mt-2">
-                                <span className="flex items-center text-primary/80"><Clock className="mr-2 h-4 w-4" /> Avg. Work Hours</span>
-                                <span className="font-bold">{averageHoursPerWorkedDay.toFixed(2)} h</span>
-                            </div>
+      <div className="grid grid-cols-1 gap-6">
+        <Card>
+            <CardHeader>
+                <CardTitle>Monthly Summary</CardTitle>
+                <CardDescription>Total counts for the selected month.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {isLoading ? <Skeleton className="h-24 w-full" /> : (
+                    <div className="space-y-2 text-sm">
+                        <div className="flex justify-between items-center">
+                            <span className="flex items-center text-green-600"><Check className="mr-2 h-4 w-4" /> Worked Days</span>
+                            <span className="font-bold">{attendanceSummary.worked}</span>
                         </div>
-                    )}
+                        <div className="flex justify-between items-center">
+                            <span className="flex items-center text-yellow-600"><CalendarOff className="mr-2 h-4 w-4" /> Days-Off</span>
+                            <span className="font-bold">{attendanceSummary.day_off}</span>
+                        </div>
+                         <div className="flex justify-between items-center">
+                            <span className="flex items-center text-red-600"><X className="mr-2 h-4 w-4" /> Absent Days</span>
+                            <span className="font-bold">{attendanceSummary.absent}</span>
+                        </div>
+                        <div className="flex justify-between items-center border-t pt-2 mt-2">
+                            <span className="flex items-center text-primary/80"><Clock className="mr-2 h-4 w-4" /> Avg. Work Hours</span>
+                            <span className="font-bold">{averageHoursPerWorkedDay.toFixed(2)} h</span>
+                        </div>
+                    </div>
+                )}
+            </CardContent>
+        </Card>
+
+        <Card>
+            <CardHeader>
+                <CardTitle>Tasks Summary</CardTitle>
+                <CardDescription>Status of tasks with due dates in {monthName}</CardDescription>
+            </CardHeader>
+            <CardContent>
+                {isLoading ? <Skeleton className="h-[300px] w-full" /> : 
+                  <TaskStatusPieChart tasks={tasks || []} />
+                }
+            </CardContent>
+        </Card>
+
+        <Card>
+            <CardHeader>
+                <CardTitle>Daily Hours Worked</CardTitle>
+                <CardDescription>Total hours worked each day in {monthName}</CardDescription>
+            </CardHeader>
+            <CardContent>
+                {isLoading ? <Skeleton className="h-[350px] w-full" /> : 
+                  monthlyChartData.some(d => d.hours > 0) ? <MonthlyHoursChart data={monthlyChartData} dateRange={dateRange} averageHours={averageHoursPerWorkedDay} /> : <div className="flex items-center justify-center h-[350px] text-muted-foreground">No data to display for this period.</div>
+                }
+            </CardContent>
+        </Card>
+        
+        <Card>
+            <CardHeader>
+                <CardTitle>Attendance Calendar</CardTitle>
+                <CardDescription>Status for each day in {monthName}</CardDescription>
+            </CardHeader>
+            <CardContent>
+                {isLoading ? <Skeleton className="h-[300px] w-full" /> : Object.keys(heatmapData).length > 0 ? <AttendanceHeatmap data={heatmapData} month={dateRange.from} />: <div className="flex items-center justify-center h-[300px] text-muted-foreground">No data to display for this period.</div>}
+            </CardContent>
+        </Card>
+
+         {currentUser.role === 'admin' && (
+            <Card>
+                <CardHeader>
+                    <CardTitle>Top Employees by Hours</CardTitle>
+                    <CardDescription>Ranking of employees by total hours in {monthName}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <TopEmployeesChart dateRange={dateRange} />
                 </CardContent>
             </Card>
-             {currentUser.role === 'admin' && (
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Top Employees by Hours</CardTitle>
-                        <CardDescription>Ranking of employees by total hours in {format(dateRange.from, 'MMMM yyyy')}</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <TopEmployeesChart dateRange={dateRange} />
-                    </CardContent>
-                </Card>
-            )}
-        </div>
+        )}
       </div>
     </div>
   );

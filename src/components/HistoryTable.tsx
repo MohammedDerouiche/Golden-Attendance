@@ -1,3 +1,4 @@
+
 'use client';
 
 import useSWR from 'swr';
@@ -7,14 +8,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { Calendar as CalendarIcon, MapPin, Edit, PlusCircle, Trash2, FileDown, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, MapPin, Edit, PlusCircle, Trash2, FileDown, Search, User as UserIcon, Copy } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Button } from './ui/button';
 import { Calendar } from './ui/calendar';
 import type { DateRange } from 'react-day-picker';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
 import EditAttendanceSheet from './EditAttendanceSheet';
-import type { Attendance } from '@/lib/supabase/types';
+import type { Attendance, User } from '@/lib/supabase/types';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,23 +31,30 @@ import { exportToExcel, generateFileName } from '@/lib/utils';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { useDebounce } from '@/hooks/useDebounce';
+import { Avatar, AvatarFallback } from './ui/avatar';
+import { Badge } from './ui/badge';
 
 interface HistoryTableProps {
-  userId: string;
+  userId: string | null;
+  canAddNew: boolean;
+  viewingUser: User | null;
 }
 
-export default function HistoryTable({ userId }: HistoryTableProps) {
+export default function HistoryTable({ userId, canAddNew, viewingUser }: HistoryTableProps) {
   const [dateRange, setDateRange] = useState<DateRange | undefined>({ from: startOfMonth(new Date()), to: endOfMonth(new Date()) });
   const [actionFilter, setActionFilter] = useState<'all' | 'in' | 'out'>('all');
   const [searchText, setSearchText] = useState('');
   const debouncedSearchText = useDebounce(searchText, 300);
 
   const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [isDuplicating, setIsDuplicating] = useState(false);
   const [editingRecord, setEditingRecord] = useState<Attendance | null>(null);
   const [recordToDelete, setRecordToDelete] = useState<Attendance | null>(null);
 
   const { selectedUser, users } = useSelectedUser();
   const { toast } = useToast();
+
+  const userMap = useMemo(() => new Map(users.map(u => [u.id, u])), [users]);
 
   const swrKey = useMemo(() => [
       'attendance',
@@ -72,34 +80,49 @@ export default function HistoryTable({ userId }: HistoryTableProps) {
       return;
     }
     
-    const viewingUser = users.find(u => u.id === userId);
+    const viewingUserName = viewingUser ? viewingUser.name : 'All_Users';
 
     const dataToExport = attendance.map(log => ({
+      'User': userMap.get(log.user_id)?.name || 'Unknown',
       'Date & Time': format(new Date(log.time), 'yyyy-MM-dd HH:mm:ss'),
       'Action': log.action,
+      'Status': log.status,
       'Latitude': log.latitude,
       'Longitude': log.longitude,
       'Notes': log.notes || 'N/A',
     }));
     
-    const fileName = generateFileName('Attendance', viewingUser?.name, dateRange);
+    const fileName = generateFileName('Attendance', viewingUserName, dateRange);
 
     exportToExcel(dataToExport, fileName);
   };
   
   const handleEdit = (record: Attendance) => {
     setEditingRecord(record);
+    setIsDuplicating(false);
     setIsSheetOpen(true);
   };
   
   const handleAddNew = () => {
+    if (!canAddNew) {
+        toast({ variant: 'destructive', title: 'Cannot add record', description: 'Please select a specific user to add a new record.'});
+        return;
+    }
     setEditingRecord(null);
+    setIsDuplicating(false);
     setIsSheetOpen(true);
   };
+
+  const handleDuplicate = (record: Attendance) => {
+    setEditingRecord(record);
+    setIsDuplicating(true);
+    setIsSheetOpen(true);
+  }
   
   const handleSheetClose = () => {
     setIsSheetOpen(false);
     setEditingRecord(null);
+    setIsDuplicating(false);
     mutate();
   }
   
@@ -129,7 +152,20 @@ export default function HistoryTable({ userId }: HistoryTableProps) {
     window.open(url, '_blank');
   };
 
-  const canEdit = selectedUser?.role === 'admin' || selectedUser?.id === userId;
+  const getStatusBadge = (status: Attendance['status']) => {
+    switch (status) {
+        case 'day_off':
+            return <Badge variant="secondary" className="bg-blue-100 text-blue-800">Day-Off</Badge>;
+        case 'absent':
+            return <Badge variant="secondary" className="bg-slate-100 text-slate-800">Absent</Badge>;
+        default:
+            return null;
+    }
+  }
+
+  const canEdit = selectedUser?.role === 'admin';
+  const showUserColumn = userId === null;
+  const sheetUser = viewingUser || selectedUser;
 
   return (
     <>
@@ -189,7 +225,7 @@ export default function HistoryTable({ userId }: HistoryTableProps) {
                     </PopoverContent>
                 </Popover>
                  <div className="flex gap-2">
-                    <Button onClick={handleAddNew} disabled={!canEdit} className="w-full">
+                    <Button onClick={handleAddNew} disabled={!canAddNew} className="w-full">
                         <PlusCircle className="mr-2 h-4 w-4" />
                         New Record
                     </Button>
@@ -204,6 +240,7 @@ export default function HistoryTable({ userId }: HistoryTableProps) {
         <Table>
           <TableHeader>
             <TableRow>
+              {showUserColumn && <TableHead>User</TableHead>}
               <TableHead>Date & Time</TableHead>
               <TableHead>Action</TableHead>
               <TableHead>Location</TableHead>
@@ -215,6 +252,7 @@ export default function HistoryTable({ userId }: HistoryTableProps) {
             {isLoading &&
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
+                  {showUserColumn && <TableCell><Skeleton className="h-5 w-32" /></TableCell>}
                   <TableCell><Skeleton className="h-5 w-48" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-16" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-8" /></TableCell>
@@ -222,53 +260,74 @@ export default function HistoryTable({ userId }: HistoryTableProps) {
                   {canEdit && <TableCell className="text-right"><Skeleton className="h-8 w-16 ml-auto" /></TableCell>}
                 </TableRow>
               ))}
-            {error && <TableRow><TableCell colSpan={canEdit ? 5: 4} className="text-center text-destructive">Failed to load history.</TableCell></TableRow>}
+            {error && <TableRow><TableCell colSpan={canEdit ? (showUserColumn ? 6: 5): (showUserColumn ? 5: 4)} className="text-center text-destructive">Failed to load history.</TableCell></TableRow>}
             {!isLoading && attendance?.length === 0 && (
               <TableRow>
-                <TableCell colSpan={canEdit ? 5: 4} className="text-center">No records found for the selected period.</TableCell>
+                <TableCell colSpan={canEdit ? (showUserColumn ? 6: 5): (showUserColumn ? 5: 4)} className="text-center">No records found for the selected period.</TableCell>
               </TableRow>
             )}
-            {attendance?.map((log) => (
-              <TableRow key={log.id}>
-                <TableCell>{format(new Date(log.time), 'PPP p')}</TableCell>
-                <TableCell>
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${log.action === 'in' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                        {log.action.toUpperCase()}
-                    </span>
-                </TableCell>
-                <TableCell>
-                  {log.latitude && log.longitude ? (
-                     <Button variant="ghost" size="icon" onClick={() => handleViewOnMap(log.latitude!, log.longitude!)}>
-                         <MapPin className="h-4 w-4 text-primary" />
-                         <span className="sr-only">View on map</span>
-                     </Button>
-                  ) : 'N/A'}
-                </TableCell>
-                <TableCell>{log.notes || 'N/A'}</TableCell>
-                {canEdit && (
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => handleEdit(log)}>
-                      <Edit className="h-4 w-4" />
-                      <span className="sr-only">Edit Record</span>
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setRecordToDelete(log)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                      <span className="sr-only">Delete Record</span>
-                    </Button>
-                  </TableCell>
-                )}
+            {attendance?.map((log) => {
+              const logUser = userMap.get(log.user_id);
+              return (
+                <TableRow key={log.id}>
+                    {showUserColumn && (
+                        <TableCell>
+                            <div className="flex items-center gap-2">
+                                <Avatar className="h-7 w-7">
+                                    <AvatarFallback>{logUser?.name?.charAt(0) || '?'}</AvatarFallback>
+                                </Avatar>
+                                <span className="font-medium">{logUser?.name || 'Unknown User'}</span>
+                            </div>
+                        </TableCell>
+                    )}
+                    <TableCell>{format(new Date(log.time), 'PPP p')}</TableCell>
+                    <TableCell>
+                        <div className="flex items-center gap-2">
+                            {log.status === 'present' ? (
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${log.action === 'in' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                    {log.action.toUpperCase()}
+                                </span>
+                            ) : getStatusBadge(log.status)}
+                        </div>
+                    </TableCell>
+                    <TableCell>
+                    {log.latitude && log.longitude ? (
+                        <Button variant="ghost" size="icon" onClick={() => handleViewOnMap(log.latitude!, log.longitude!)}>
+                            <MapPin className="h-4 w-4 text-primary" />
+                            <span className="sr-only">View on map</span>
+                        </Button>
+                    ) : 'N/A'}
+                    </TableCell>
+                    <TableCell>{log.notes || 'N/A'}</TableCell>
+                    {canEdit && (
+                    <TableCell className="text-right">
+                        <Button variant="ghost" size="icon" onClick={() => handleDuplicate(log)}>
+                            <Copy className="h-4 w-4" />
+                            <span className="sr-only">Duplicate Record</span>
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(log)}>
+                        <Edit className="h-4 w-4" />
+                        <span className="sr-only">Edit Record</span>
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setRecordToDelete(log)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                        <span className="sr-only">Delete Record</span>
+                        </Button>
+                    </TableCell>
+                    )}
               </TableRow>
-            ))}
+            )})}
           </TableBody>
         </Table>
         </div>
 
-        <EditAttendanceSheet
+        {sheetUser && <EditAttendanceSheet
             isOpen={isSheetOpen}
             onClose={handleSheetClose}
             record={editingRecord}
-            userId={userId}
-        />
+            user={sheetUser}
+            isDuplicating={isDuplicating}
+        />}
         
       </CardContent>
     </Card>
