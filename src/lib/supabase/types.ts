@@ -1,4 +1,7 @@
 
+
+
+
 import type { User } from ".";
 
 export type Json =
@@ -99,10 +102,11 @@ export interface Database {
           due_date: string | null
           created_at: string
           created_by: string
-          assigned_to: string[] | null
+          assigned_to: string | null
           recurrence_type: TaskRecurrence
           recurrence_interval: number | null
           original_task_id: string | null
+          group_id: string | null
         }
         Insert: {
           id?: string
@@ -112,10 +116,11 @@ export interface Database {
           priority?: TaskPriority
           due_date?: string | null
           created_by: string
-          assigned_to?: string[] | null
+          assigned_to?: string[] | null // For multi-insert logic
           recurrence_type?: TaskRecurrence
           recurrence_interval?: number | null
           original_task_id?: string | null
+          group_id?: string | null
         }
         Update: {
           id?: string
@@ -125,10 +130,28 @@ export interface Database {
           priority?: TaskPriority
           due_date?: string | null
           created_by?: string
-          assigned_to?: string[] | null
+          assigned_to?: string | null
           recurrence_type?: TaskRecurrence
           recurrence_interval?: number | null
           original_task_id?: string | null
+          group_id?: string | null
+        }
+      }
+      task_groups: {
+        Row: {
+          id: string
+          name: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          created_at?: string
         }
       }
     }
@@ -341,11 +364,12 @@ export type AttendanceUpdate = Database['public']['Tables']['attendance']['Updat
 export type ActiveEmployee = Database['public']['Functions']['get_active_employees']['Returns'][number];
 export type TopEmployee = Database['public']['Functions']['get_top_employees_by_hours']['Returns'][number];
 
-export type Task = Omit<Database['public']['Tables']['tasks']['Row'], 'assigned_to'> & {
+export type TaskGroup = Database['public']['Tables']['task_groups']['Row'];
+
+export type Task = Database['public']['Tables']['tasks']['Row'] & {
     users_created_by: Pick<User, 'id' | 'name'> | null;
-    assigned_to: Pick<User, 'id' | 'name'>[] | null;
+    assigned_to: Pick<User, 'id' | 'name'> | null;
+    task_groups: Pick<TaskGroup, 'id' | 'name'> | null;
 };
 export type TaskInsert = Database['public']['Tables']['tasks']['Insert'];
 export type TaskUpdate = Database['public']['Tables']['tasks']['Update'];
-
-    

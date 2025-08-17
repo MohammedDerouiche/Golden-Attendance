@@ -4,7 +4,7 @@
 import useSWR from 'swr';
 import { useState, useMemo } from 'react';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
-import { getTasks } from '@/lib/supabase/api';
+import { getTasks, getTaskGroups } from '@/lib/supabase/api';
 import TaskList from '@/components/tasks/TaskList';
 import TaskListTable from '@/components/tasks/TaskListTable';
 import { Button } from '@/components/ui/button';
@@ -31,9 +31,12 @@ export default function TasksPage() {
     const [filters, setFilters] = useState({
         status: undefined as TaskStatus | undefined,
         priority: undefined as TaskPriority | undefined,
-        assignedTo: undefined as string | undefined
+        assignedTo: undefined as string | undefined,
+        groupId: undefined as string | undefined,
     });
     const [dateFilter, setDateFilter] = useState<Date | undefined>(new Date());
+
+    const { data: taskGroups, isLoading: isLoadingGroups, mutate: mutateGroups } = useSWR('task_groups', getTaskGroups);
 
     const swrKey = useMemo(() => (
         selectedUser ? ['tasks', selectedUser.id, selectedUser.role, filters, dateFilter] : null
@@ -52,6 +55,7 @@ export default function TasksPage() {
         setEditingTask(null);
         setIsFormOpen(false);
         mutate(); // Refresh the tasks list
+        mutateGroups(); // Refresh groups in case a new one was added
     };
 
     const handleFilterChange = (filterName: keyof typeof filters, value: string) => {
@@ -82,7 +86,7 @@ export default function TasksPage() {
         );
     }
 
-    const isLoading = isUserLoading || isLoadingTasks;
+    const isLoading = isUserLoading || isLoadingTasks || isLoadingGroups;
 
     return (
         <div className="container mx-auto p-4 md:p-8">
@@ -141,6 +145,16 @@ export default function TasksPage() {
                             <SelectContent>
                                 <SelectItem value="all">All Users</SelectItem>
                                 {users.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>Group</Label>
+                        <Select onValueChange={(v) => handleFilterChange('groupId', v)} defaultValue="all">
+                            <SelectTrigger><SelectValue placeholder="Filter by group" /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All Groups</SelectItem>
+                                {taskGroups?.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
                             </SelectContent>
                         </Select>
                     </div>

@@ -1,8 +1,11 @@
 
 
+
+
+
 import { supabase } from './client';
-import type { UserInsert, UserUpdate, AttendanceInsert, AttendanceUpdate, Attendance, ActiveEmployee, Task, TaskInsert, TaskUpdate, TaskStatus, TaskPriority, TaskRecurrence, User } from './types';
-import { startOfDay, endOfDay, addDays, addWeeks, addMonths, startOfMonth, endOfMonth } from 'date-fns';
+import type { UserInsert, UserUpdate, AttendanceInsert, AttendanceUpdate, Attendance, ActiveEmployee, Task, TaskInsert, TaskUpdate, TaskStatus, TaskPriority, TaskRecurrence, User, TaskGroup } from './types';
+import { startOfDay, endOfDay, addDays, addWeeks, addMonths, startOfMonth, endOfMonth, isFriday } from 'date-fns';
 import type { DateRange } from 'react-day-picker';
 
 // User Functions
@@ -207,31 +210,22 @@ export const createOrUpdateManualRecord = async (
 export const getTasks = async (
     userId: string | null, // Allow null for admin fetching all
     isAdmin: boolean, 
-    filters: { status?: TaskStatus, priority?: TaskPriority, assignedTo?: string },
+    filters: { status?: TaskStatus, priority?: TaskPriority, assignedTo?: string, groupId?: string },
     dateFilter?: Date | DateRange
 ): Promise<Task[]> => {
     let query = supabase
         .from('tasks')
         .select(`
-            id,
-            title,
-            description,
-            status,
-            priority,
-            due_date,
-            created_at,
-            created_by,
-            recurrence_type,
-            recurrence_interval,
-            original_task_id,
+            *,
             users_created_by:created_by ( id, name ),
-            assigned_to
+            assigned_to:users!tasks_assigned_to_fkey ( id, name ),
+            task_groups ( id, name )
         `)
         .order('due_date', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false });
 
     if (!isAdmin && userId) {
-        query = query.or(`created_by.eq.${userId},assigned_to.cs.{${userId}}`);
+        query = query.or(`created_by.eq.${userId},assigned_to.eq.${userId}`);
     }
 
     if (filters.status) {
@@ -241,7 +235,10 @@ export const getTasks = async (
         query = query.eq('priority', filters.priority);
     }
     if (filters.assignedTo) {
-        query = query.contains('assigned_to', [filters.assignedTo]);
+        query = query.eq('assigned_to', filters.assignedTo);
+    }
+    if (filters.groupId) {
+        query = query.eq('group_id', filters.groupId);
     }
 
     if (dateFilter) {
@@ -256,40 +253,42 @@ export const getTasks = async (
         }
     }
 
-    const { data: tasksData, error } = await query;
+    const { data, error } = await query;
     if (error) {
         console.error("Error fetching tasks:", error);
         throw error;
     };
-
-    // Manually fetch assigned users
-    const allUserIds = new Set<string>();
-    tasksData?.forEach(task => {
-        if(task.assigned_to) {
-            task.assigned_to.forEach(uid => allUserIds.add(uid));
-        }
-    });
-
-    if (users) {
-        const { data: users, error: userError } = await supabase.from('users').select('id, name').in('id', Array.from(allUserIds));
-        if(userError) {
-            console.error("Error fetching assigned users:", userError);
-            throw userError;
-        }
-        const userMap = new Map(users.map(u => [u.id, u as User]));
-
-        const result: Task[] = tasksData?.map(task => ({
-            ...task,
-            assigned_to: task.assigned_to ? task.assigned_to.map(uid => userMap.get(uid)!).filter(Boolean) : null,
-        })) || [];
-
-        return result;
-    }
-    return tasksData as Task[];
+    
+    return data as unknown as Task[];
 };
 
 export const createTask = async (taskData: TaskInsert) => {
-    const { data, error } = await supabase.from('tasks').insert(taskData).select().single();
+    const { assigned_to, ...restOfTaskData } = taskData;
+
+    const assignedIds = assigned_to || [];
+
+    if (assignedIds.length === 0) {
+        // Create one unassigned task
+        const { data, error } = await supabase
+            .from('tasks')
+            .insert({ ...restOfTaskData, assigned_to: null })
+            .select()
+            .single();
+        if (error) throw error;
+        return [data];
+    }
+
+    // Create a task for each assigned user
+    const tasksToInsert = assignedIds.map(userId => ({
+        ...restOfTaskData,
+        assigned_to: userId,
+    }));
+    
+    const { data, error } = await supabase
+        .from('tasks')
+        .insert(tasksToInsert)
+        .select();
+
     if (error) throw error;
     return data;
 };
@@ -311,7 +310,13 @@ const getNextDueDate = (dueDate: Date, recurrenceType: TaskRecurrence, interval?
 };
 
 export const updateTask = async (taskId: string, taskData: TaskUpdate) => {
-    const { data: updatedTask, error } = await supabase.from('tasks').update(taskData).eq('id', taskId).select().single();
+    const { data: updatedTask, error } = await supabase
+        .from('tasks')
+        .update(taskData)
+        .eq('id', taskId)
+        .select(`*, task_groups(id, name)`)
+        .single();
+
     if (error) throw error;
 
     // Handle recurring task creation
@@ -320,19 +325,21 @@ export const updateTask = async (taskId: string, taskData: TaskUpdate) => {
         const nextDueDate = getNextDueDate(currentDueDate, updatedTask.recurrence_type, updatedTask.recurrence_interval);
 
         if (nextDueDate) {
-            const newTask: TaskInsert = {
+            const newTask: Omit<TaskInsert, 'assigned_to'> & { assigned_to: string | null } = {
                 title: updatedTask.title,
                 description: updatedTask.description,
                 status: 'not_started',
                 priority: updatedTask.priority,
                 due_date: nextDueDate.toISOString(),
                 created_by: updatedTask.created_by,
-                assigned_to: updatedTask.assigned_to,
+                assigned_to: updatedTask.assigned_to, 
                 recurrence_type: updatedTask.recurrence_type,
                 recurrence_interval: updatedTask.recurrence_interval,
                 original_task_id: updatedTask.original_task_id || updatedTask.id, // Chain them
+                group_id: updatedTask.group_id
             };
-            await createTask(newTask);
+            // Create a single recurring task, not multiple
+             await supabase.from('tasks').insert(newTask);
         }
     }
 
@@ -343,4 +350,17 @@ export const deleteTask = async (taskId: string) => {
     const { error } = await supabase.from('tasks').delete().eq('id', taskId);
     if (error) throw error;
     return true;
+};
+
+// Task Group Functions
+export const getTaskGroups = async (): Promise<TaskGroup[]> => {
+    const { data, error } = await supabase.from('task_groups').select('*').order('name');
+    if (error) throw error;
+    return data;
+};
+
+export const createTaskGroup = async (name: string): Promise<TaskGroup> => {
+    const { data, error } = await supabase.from('task_groups').insert({ name }).select().single();
+    if (error) throw error;
+    return data;
 };

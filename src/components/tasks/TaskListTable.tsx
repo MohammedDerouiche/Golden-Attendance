@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Edit, Trash2, MoreVertical, Calendar, User, Flag, CheckCircle, Circle, CircleDotDashed, Users } from 'lucide-react';
+import { Edit, Trash2, MoreVertical, Circle, CircleDotDashed, CheckCircle, Folder } from 'lucide-react';
 import { format } from 'date-fns';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
 import { deleteTask, updateTask } from '@/lib/supabase/api';
@@ -49,7 +49,7 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
   const { toast } = useToast();
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
 
-  const canModify = (task: Task) => selectedUser?.role === 'admin' || selectedUser?.id === task.created_by || task.assigned_to?.some(u => u.id === selectedUser?.id);
+  const canModify = (task: Task) => selectedUser?.role === 'admin' || selectedUser?.id === task.created_by || task.assigned_to?.id === selectedUser?.id;
 
   const handleDelete = async () => {
     if (!taskToDelete) return;
@@ -93,6 +93,7 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
               <TableHead className="w-[50px]">Done</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="min-w-[250px]">Title</TableHead>
+              <TableHead>Group</TableHead>
               <TableHead>Priority</TableHead>
               <TableHead>Assigned To</TableHead>
               <TableHead>Due Date</TableHead>
@@ -130,28 +131,32 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
                             {task.description && <p className="text-xs text-muted-foreground truncate">{task.description}</p>}
                         </TableCell>
                         <TableCell>
+                            {task.task_groups ? (
+                                <Badge variant="secondary" className="flex items-center gap-1.5">
+                                    <Folder className="h-3 w-3" />
+                                    {task.task_groups.name}
+                                </Badge>
+                            ) : (
+                                <span className="text-muted-foreground text-xs">No Group</span>
+                            )}
+                        </TableCell>
+                        <TableCell>
                             <Badge variant="outline" className={cn("text-white", priorityInfo.color)}>{priorityInfo.label}</Badge>
                         </TableCell>
                         <TableCell>
-                            {task.assigned_to && task.assigned_to.length > 0 ? (
+                            {task.assigned_to ? (
                                 <TooltipProvider>
                                     <Tooltip>
                                         <TooltipTrigger asChild>
-                                            <div className="flex -space-x-2">
-                                                {task.assigned_to.slice(0, 3).map(user => (
-                                                    <Avatar key={user.id} className="h-7 w-7 border-2 border-background">
-                                                        <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
-                                                    </Avatar>
-                                                ))}
-                                                {task.assigned_to.length > 3 && (
-                                                     <Avatar className="h-7 w-7 border-2 border-background">
-                                                        <AvatarFallback>+{task.assigned_to.length - 3}</AvatarFallback>
-                                                    </Avatar>
-                                                )}
+                                            <div className="flex items-center gap-2">
+                                                <Avatar className="h-7 w-7 border-2 border-background">
+                                                    <AvatarFallback>{task.assigned_to.name.charAt(0)}</AvatarFallback>
+                                                </Avatar>
+                                                <span>{task.assigned_to.name}</span>
                                             </div>
                                         </TooltipTrigger>
                                         <TooltipContent>
-                                            <p>{task.assigned_to.map(u => u.name).join(', ')}</p>
+                                            <p>{task.assigned_to.name}</p>
                                         </TooltipContent>
                                     </Tooltip>
                                 </TooltipProvider>

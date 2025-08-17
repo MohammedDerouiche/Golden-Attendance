@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Edit, Trash2, MoreVertical, Calendar, User, Flag, CheckCircle, Circle, CircleDotDashed, Repeat, RotateCcw, Users } from 'lucide-react';
+import { Edit, Trash2, MoreVertical, Calendar, User, Flag, CheckCircle, Circle, CircleDotDashed, Repeat, RotateCcw, Folder } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
 import { deleteTask, updateTask } from '@/lib/supabase/api';
@@ -111,6 +111,12 @@ export default function TaskItem({ task, onEdit, onDelete, onStatusChange }: Tas
                             </DropdownMenu>
                         )}
                     </div>
+                    {task.task_groups && (
+                        <div className="flex items-center gap-2 text-xs text-primary font-medium pt-1">
+                            <Folder className="h-3 w-3" />
+                            <span>{task.task_groups.name}</span>
+                        </div>
+                    )}
                     <CardDescription>{task.description || 'No description.'}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4 flex-grow">
@@ -149,22 +155,15 @@ export default function TaskItem({ task, onEdit, onDelete, onStatusChange }: Tas
                         <User className="h-4 w-4 text-muted-foreground" />
                         <span>Created by: {task.users_created_by?.name || 'Unknown'}</span>
                     </div>
-                    {task.assigned_to && task.assigned_to.length > 0 && (
+                    {task.assigned_to && (
                         <div className="flex items-center gap-2 text-sm">
-                           <Users className="h-4 w-4 text-muted-foreground" />
-                           <div className="flex -space-x-2">
-                                {task.assigned_to.map(user => (
-                                     <TooltipProvider key={user.id}><Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Avatar className="h-6 w-6 border-2 border-background">
-                                                <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
-                                            </Avatar>
-                                        </TooltipTrigger>
-                                        <TooltipContent><p>Assigned to {user.name}</p></TooltipContent>
-                                     </Tooltip></TooltipProvider>
-                                ))}
+                           <User className="h-4 w-4 text-muted-foreground" />
+                           <div className="flex items-center gap-2">
+                                <Avatar className="h-6 w-6 border-2 border-background">
+                                    <AvatarFallback>{task.assigned_to.name.charAt(0)}</AvatarFallback>
+                                </Avatar>
+                                <span className="truncate">Assigned to {task.assigned_to.name}</span>
                            </div>
-                           <span className="truncate">{task.assigned_to.map(u => u.name).join(', ')}</span>
                         </div>
                     )}
                 </CardContent>

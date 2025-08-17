@@ -2,6 +2,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import useSWR from 'swr';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
@@ -11,27 +12,31 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu';
 import { Calendar } from '@/components/ui/calendar';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
-import { createTask, updateTask } from '@/lib/supabase/api';
-import type { Task, TaskInsert, TaskUpdate, TaskRecurrence } from '@/lib/supabase/types';
+import { createTask, updateTask, getTaskGroups, createTaskGroup } from '@/lib/supabase/api';
+import type { Task, TaskInsert, TaskUpdate } from '@/lib/supabase/types';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
-import { CalendarIcon, ChevronsUpDown } from 'lucide-react';
+import { CalendarIcon, Plus } from 'lucide-react';
+import { Badge } from '../ui/badge';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import { Label } from '@/components/ui/label';
+
 
 const taskSchema = z.object({
   title: z.string().min(3, { message: 'Title must be at least 3 characters.' }),
   description: z.string().optional().nullable(),
   status: z.enum(['not_started', 'in_progress', 'completed']),
   priority: z.enum(['low', 'medium', 'high']),
-  assigned_to: z.array(z.string()).optional().nullable(),
+  assigned_to: z.array(z.string()).optional(),
   due_date: z.date().optional().nullable(),
+  group_id: z.string().optional().nullable(),
   recurrence_type: z.enum(['none', 'daily', 'weekly', 'monthly', 'custom_days']),
   recurrence_interval: z.coerce.number().positive().optional().nullable(),
 }).refine(data => {
-    // Require recurrence_interval if recurrence_type is custom_days
     if (data.recurrence_type === 'custom_days') {
         return data.recurrence_interval != null && data.recurrence_interval > 0;
     }
@@ -49,38 +54,95 @@ interface TaskFormProps {
   onFinished: () => void;
 }
 
+function CreateGroupDialog({ onGroupCreated }: { onGroupCreated: (newGroup: any) => void }) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [groupName, setGroupName] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    const { toast } = useToast();
+
+    const handleCreate = async () => {
+        if (!groupName.trim()) {
+            toast({ variant: 'destructive', title: 'Group name cannot be empty.' });
+            return;
+        }
+        setIsSaving(true);
+        try {
+            const newGroup = await createTaskGroup(groupName);
+            toast({ title: 'Group Created', description: `Successfully created group "${newGroup.name}".`});
+            onGroupCreated(newGroup);
+            setIsOpen(false);
+            setGroupName('');
+        } catch (error: any) {
+            toast({ variant: 'destructive', title: 'Error creating group', description: error.message });
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <Plus className="h-4 w-4" />
+                </Button>
+            </DialogTrigger>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Create New Task Group</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                    <Label htmlFor="group-name">Group Name</Label>
+                    <Input 
+                        id="group-name" 
+                        value={groupName} 
+                        onChange={(e) => setGroupName(e.target.value)} 
+                        placeholder="e.g., Marketing Campaign"
+                    />
+                </div>
+                <div className="flex justify-end gap-2">
+                     <Button variant="outline" onClick={() => setIsOpen(false)}>Cancel</Button>
+                     <Button onClick={handleCreate} disabled={isSaving}>
+                        {isSaving ? 'Creating...' : 'Create'}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
 export default function TaskForm({ task, onFinished }: TaskFormProps) {
   const { toast } = useToast();
   const { users, selectedUser } = useSelectedUser();
-  const [open, setOpen] = useState(false);
+  const { data: taskGroups, mutate: mutateGroups } = useSWR('task_groups', getTaskGroups);
+
 
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
-      title: '',
-      description: '',
-      status: 'not_started',
-      priority: 'medium',
-      assigned_to: [],
-      due_date: null,
-      recurrence_type: 'none',
-      recurrence_interval: undefined,
+        title: '',
+        description: '',
+        status: 'not_started',
+        priority: 'medium',
+        assigned_to: [],
+        due_date: null,
+        group_id: 'no-group',
+        recurrence_type: 'none',
+        recurrence_interval: undefined,
     },
   });
-
-  const watchedRecurrenceType = form.watch('recurrence_type');
-
+  
   useEffect(() => {
     if (task) {
       form.reset({
         title: task.title,
-        description: task.description,
+        description: task.description ?? '',
         status: task.status,
         priority: task.priority,
-        assigned_to: task.assigned_to?.map(u => u.id) || [],
+        assigned_to: task.assigned_to ? [task.assigned_to.id] : [],
         due_date: task.due_date ? new Date(task.due_date) : null,
+        group_id: task.group_id ?? 'no-group',
         recurrence_type: task.recurrence_type || 'none',
-        recurrence_interval: task.recurrence_interval || undefined,
+        recurrence_interval: task.recurrence_interval ?? undefined,
       });
     } else {
       form.reset({
@@ -90,12 +152,16 @@ export default function TaskForm({ task, onFinished }: TaskFormProps) {
         priority: 'medium',
         assigned_to: [],
         due_date: null,
+        group_id: 'no-group',
         recurrence_type: 'none',
         recurrence_interval: undefined,
       });
     }
   }, [task, form]);
 
+  const watchedRecurrenceType = form.watch('recurrence_type');
+  const assignedUsers = form.watch('assigned_to') || [];
+  
   const onSubmit = async (values: TaskFormValues) => {
     if (!selectedUser) {
         toast({ variant: 'destructive', title: 'You must be logged in to create a task.' });
@@ -103,34 +169,46 @@ export default function TaskForm({ task, onFinished }: TaskFormProps) {
     }
 
     try {
-      if (task) {
-        // Update task
-        const updateData: TaskUpdate = {
-          ...values,
-          assigned_to: values.assigned_to && values.assigned_to.length > 0 ? values.assigned_to : null,
-          due_date: values.due_date ? values.due_date.toISOString() : null,
-        };
-        await updateTask(task.id, updateData);
-        toast({ title: 'Task Updated', description: 'The task has been successfully updated.' });
-      } else {
-        // Create task
-        const insertData: TaskInsert = {
-          ...values,
-          created_by: selectedUser.id,
-          assigned_to: values.assigned_to && values.assigned_to.length > 0 ? values.assigned_to : null,
-          due_date: values.due_date ? values.due_date.toISOString() : null,
-          original_task_id: undefined, // It's the first one
-        };
-        await createTask(insertData);
-        toast({ title: 'Task Created', description: 'A new task has been successfully created.' });
-      }
-      onFinished();
+        const groupId = values.group_id === 'no-group' ? null : values.group_id;
+
+        if (task) { // This is an update
+             const updateData: TaskUpdate = {
+                title: values.title,
+                description: values.description,
+                status: values.status,
+                priority: values.priority,
+                due_date: values.due_date ? values.due_date.toISOString() : null,
+                assigned_to: values.assigned_to?.[0] || null,
+                group_id: groupId,
+                recurrence_type: values.recurrence_type,
+                recurrence_interval: values.recurrence_interval,
+            };
+            await updateTask(task.id, updateData);
+            toast({ title: 'Task Updated', description: 'The task has been successfully updated.' });
+
+        } else { // This is a create
+            const insertData: TaskInsert = {
+                title: values.title,
+                description: values.description,
+                status: values.status,
+                priority: values.priority,
+                due_date: values.due_date ? values.due_date.toISOString() : null,
+                created_by: selectedUser.id,
+                assigned_to: values.assigned_to,
+                group_id: groupId,
+                recurrence_type: values.recurrence_type,
+                recurrence_interval: values.recurrence_interval,
+            };
+            await createTask(insertData);
+            toast({ title: 'Task(s) Created', description: 'A new task has been successfully created for each assigned user.' });
+        }
+        onFinished();
     } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'An error occurred',
-        description: error.message,
-      });
+        toast({
+            variant: 'destructive',
+            title: 'An error occurred',
+            description: error.message,
+        });
     }
   };
 
@@ -201,42 +279,59 @@ export default function TaskForm({ task, onFinished }: TaskFormProps) {
             )}
             />
         </div>
-         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
             <FormField
               control={form.control}
               name="assigned_to"
               render={({ field }) => (
                 <FormItem className="flex flex-col">
-                  <FormLabel>Assign To (Optional)</FormLabel>
-                  <DropdownMenu open={open} onOpenChange={setOpen}>
+                  <FormLabel>Assign To</FormLabel>
+                   <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                          <Button variant="outline" role="combobox" aria-expanded={open} className="justify-between">
-                            <span className="truncate">
-                                {field.value && field.value.length > 0 
-                                  ? `${field.value.length} user(s) selected` 
-                                  : "Select users..."}
-                            </span>
-                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                          </Button>
+                         <FormControl>
+                            <Button
+                            variant="outline"
+                            className="w-full justify-start h-auto min-h-10 text-left font-normal"
+                            >
+                            <div className="flex gap-1 flex-wrap">
+                                {assignedUsers.length === 0 ? <span className="text-muted-foreground">Select users...</span> :
+                                users
+                                .filter((user) => assignedUsers.includes(user.id))
+                                .map((user) => (
+                                    <Badge
+                                    variant="secondary"
+                                    key={user.id}
+                                    className="mr-1"
+                                    >
+                                    {user.name}
+                                    </Badge>
+                                ))}
+                            </div>
+                            </Button>
+                        </FormControl>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width]">
-                          {users.map((user) => (
-                              <DropdownMenuCheckboxItem
-                                  key={user.id}
-                                  checked={field.value?.includes(user.id)}
-                                  onCheckedChange={(checked) => {
-                                      const currentValues = field.value || [];
-                                      return checked
-                                          ? field.onChange([...currentValues, user.id])
-                                          : field.onChange(currentValues.filter((value) => value !== user.id));
-                                  }}
-                                  onSelect={(e) => e.preventDefault()}
-                              >
-                                  {user.name}
-                              </DropdownMenuCheckboxItem>
-                          ))}
+                      <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width]" align="start">
+                        {users.map((user) => (
+                           <DropdownMenuCheckboxItem
+                            key={user.id}
+                            checked={field.value?.includes(user.id)}
+                            onCheckedChange={(checked) => {
+                                return checked
+                                ? field.onChange([...(field.value || []), user.id])
+                                : field.onChange(
+                                    field.value?.filter(
+                                    (value) => value !== user.id
+                                    )
+                                )
+                            }}
+                            onSelect={(e) => e.preventDefault()} // prevent menu from closing on select
+                          >
+                            {user.name}
+                          </DropdownMenuCheckboxItem>
+                        ))}
                       </DropdownMenuContent>
-                  </DropdownMenu>
+                   </DropdownMenu>
                   <FormMessage />
                 </FormItem>
               )}
@@ -268,6 +363,37 @@ export default function TaskForm({ task, onFinished }: TaskFormProps) {
               )}
             />
         </div>
+        <FormField
+            control={form.control}
+            name="group_id"
+            render={({ field }) => (
+                <FormItem>
+                    <FormLabel>Group (Optional)</FormLabel>
+                    <div className="flex items-center gap-2">
+                        <Select onValueChange={field.onChange} value={field.value || 'no-group'}>
+                            <FormControl>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Assign to a group" />
+                                </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                                <SelectItem value="no-group">No Group</SelectItem>
+                                {taskGroups?.map(group => (
+                                    <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <CreateGroupDialog 
+                            onGroupCreated={(newGroup) => {
+                                mutateGroups(); // Re-fetch groups
+                                field.onChange(newGroup.id); // Set the new group as selected
+                            }}
+                        />
+                    </div>
+                    <FormMessage />
+                </FormItem>
+            )}
+        />
         
         <div className="space-y-2 rounded-md border p-4">
             <h3 className="font-medium">Recurrence</h3>
@@ -321,3 +447,4 @@ export default function TaskForm({ task, onFinished }: TaskFormProps) {
     </Form>
   );
 }
+
