@@ -120,9 +120,15 @@ export default function Clock() {
     }
   }, [todaysAttendance]);
 
+  const hasStaticMarkToday = useMemo(() => {
+    if (!todaysAttendance || todaysAttendance.length === 0) return false;
+    return todaysAttendance.some(r => r.status === 'absent' || r.status === 'day_off');
+  }, [todaysAttendance]);
+
   useEffect(() => {
     let timer: NodeJS.Timeout | undefined;
-    if (lastAttendance?.action === 'in') {
+    // Only start the timer if the user's last action was clock-in and their status is 'present'
+    if (lastAttendance?.action === 'in' && !hasStaticMarkToday) {
       timer = setInterval(() => {
         setLiveSecondsToday(prev => prev + 1);
       }, 1000);
@@ -130,7 +136,7 @@ export default function Clock() {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [lastAttendance]);
+  }, [lastAttendance, hasStaticMarkToday]);
 
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(
@@ -194,11 +200,6 @@ export default function Clock() {
         setShowConfirmation(null);
      }
   }
-
-  const hasStaticMarkToday = useMemo(() => {
-    if (!todaysAttendance || todaysAttendance.length === 0) return false;
-    return todaysAttendance.some(r => r.status === 'absent' || r.status === 'day_off');
-  }, [todaysAttendance]);
   
   const { monthlyHoursWorked, monthlyTargetHours, monthlyProgressPercentage } = useMemo(() => {
     if (!selectedUser) return { monthlyHoursWorked: 0, monthlyTargetHours: 0, monthlyProgressPercentage: 0 };

@@ -2,6 +2,7 @@
 
 
 
+
 import type { User } from ".";
 
 export type Json =
@@ -219,6 +220,7 @@ BEGIN
             att.user_id,
             att.action,
             att.time,
+            att.status,
             att.latitude,
             att.longitude,
             ROW_NUMBER() OVER(PARTITION BY att.user_id ORDER BY att.time DESC) as rn
@@ -236,7 +238,7 @@ BEGIN
     JOIN
         public.users u ON la.user_id = u.id
     WHERE
-        la.rn = 1 AND la.action = 'in';
+        la.rn = 1 AND la.action = 'in' AND la.status = 'present';
 END;
 $$ LANGUAGE plpgsql;
 */
