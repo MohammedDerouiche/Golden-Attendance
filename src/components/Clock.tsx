@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
-import { getLastAttendanceForUser, createAttendance, getTodaysAttendanceForUser, markAsDayOff, markAsAbsent, getMonthlyAttendanceForUser } from '@/lib/supabase/api';
+import { createAttendance, getTodaysAttendanceForUser, markAsDayOff, markAsAbsent, getMonthlyAttendanceForUser } from '@/lib/supabase/api';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card';
 import {
@@ -17,7 +17,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { format, formatDistanceToNow, parseISO, getDay, startOfMonth, endOfMonth, eachDayOfInterval, isSaturday, isSunday, isFriday } from 'date-fns';
+import { format, formatDistanceToNow, parseISO, getDay, startOfMonth, endOfMonth, eachDayOfInterval, isFriday } from 'date-fns';
 import { Skeleton } from './ui/skeleton';
 import { LogIn, LogOut, CheckCircle2, DollarSign, XCircle, CalendarCheck, Target, Hourglass, Calendar as CalendarIcon } from 'lucide-react';
 import type { Attendance, AttendanceStatus, User } from '@/lib/supabase/types';
@@ -32,6 +32,10 @@ interface LocationCoords {
 const calculateWorkedHours = (attendance: Attendance[]): number => {
     let totalSeconds = 0;
     
+    if (!attendance || attendance.length === 0) {
+      return 0;
+    }
+
     const sortedAttendance = [...attendance].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 
     let clockInTime: Date | null = null;
@@ -96,11 +100,6 @@ export default function Clock() {
   const [liveSecondsToday, setLiveSecondsToday] = useState(0);
   const [showConfirmation, setShowConfirmation] = useState<AttendanceStatus | null>(null);
 
-  const { data: lastAttendance, mutate: mutateLast, isLoading: isLoadingLast } = useSWR(
-    selectedUser ? `last_attendance_${selectedUser.id}` : null,
-    () => getLastAttendanceForUser(selectedUser!.id)
-  );
-
   const { data: todaysAttendance, mutate: mutateToday, isLoading: isLoadingToday } = useSWR(
     selectedUser ? `todays_attendance_${selectedUser.id}` : null,
     () => getTodaysAttendanceForUser(selectedUser!.id),
@@ -117,7 +116,14 @@ export default function Clock() {
     if (todaysAttendance) {
         const totalSeconds = calculateWorkedHours(todaysAttendance);
         setLiveSecondsToday(totalSeconds);
+    } else {
+        setLiveSecondsToday(0);
     }
+  }, [todaysAttendance]);
+
+  const lastActionToday = useMemo(() => {
+    if (!todaysAttendance || todaysAttendance.length === 0) return null;
+    return todaysAttendance[todaysAttendance.length - 1];
   }, [todaysAttendance]);
 
   const hasStaticMarkToday = useMemo(() => {
@@ -127,8 +133,8 @@ export default function Clock() {
 
   useEffect(() => {
     let timer: NodeJS.Timeout | undefined;
-    // Only start the timer if the user's last action was clock-in and their status is 'present'
-    if (lastAttendance?.action === 'in' && !hasStaticMarkToday) {
+    // Only start the timer if the user's last action today was clock-in and their status is 'present'
+    if (lastActionToday?.action === 'in' && !hasStaticMarkToday) {
       timer = setInterval(() => {
         setLiveSecondsToday(prev => prev + 1);
       }, 1000);
@@ -136,7 +142,7 @@ export default function Clock() {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [lastAttendance, hasStaticMarkToday]);
+  }, [lastActionToday, hasStaticMarkToday]);
 
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(
@@ -157,7 +163,6 @@ export default function Clock() {
         longitude: location?.longitude,
         status: 'present', // This is a regular clock in/out
       });
-      await mutateLast();
       await mutateToday();
       await mutateMonth();
       toast({
@@ -185,7 +190,6 @@ export default function Clock() {
         } else if (showConfirmation === 'absent') {
             await markAsAbsent(selectedUser.id);
         }
-        await mutateLast();
         await mutateToday();
         await mutateMonth();
         toast({
@@ -215,8 +219,8 @@ export default function Clock() {
     };
   }, [monthlyAttendance, selectedUser]);
 
-  const canClockIn = !hasStaticMarkToday && lastAttendance?.action !== 'in';
-  const canClockOut = !hasStaticMarkToday && lastAttendance?.action === 'in';
+  const canClockIn = !hasStaticMarkToday && lastActionToday?.action !== 'in';
+  const canClockOut = !hasStaticMarkToday && lastActionToday?.action === 'in';
 
   const dailyProgressPercentage = useMemo(() => {
     if (!selectedUser) return 0;
@@ -266,9 +270,9 @@ export default function Clock() {
         if (staticRecord?.status === 'day_off') return "You have marked today as Day-Off.";
     }
 
-    if (!lastAttendance) return 'Ready to start your day!';
+    if (!lastActionToday) return 'Ready to start your day!';
     
-    return `Last action: ${lastAttendance.action.toUpperCase()} ${formatDistanceToNow(parseISO(lastAttendance.time), { addSuffix: true })}`;
+    return `Last action: ${lastActionToday.action.toUpperCase()} ${formatDistanceToNow(parseISO(lastActionToday.time), { addSuffix: true })}`;
   }
   
   const dailyTarget = useMemo(() => {
@@ -277,7 +281,7 @@ export default function Clock() {
     return isFriday ? (selectedUser.friday_target_hours || selectedUser.daily_target_hours) : selectedUser.daily_target_hours;
   }, [selectedUser])
 
-  if (isLoadingLast || isLoadingToday || isLoadingMonth) {
+  if (isLoadingToday || isLoadingMonth) {
       return (
         <Card className="w-full max-w-lg text-center shadow-lg">
             <CardHeader>

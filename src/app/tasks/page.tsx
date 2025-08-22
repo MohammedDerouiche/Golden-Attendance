@@ -226,14 +226,16 @@ export default function TasksPage() {
             )}
 
             <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-                <DialogContent className="sm:max-w-[600px]">
-                    <DialogHeader>
+                <DialogContent className="sm:max-w-[600px] grid-rows-[auto_minmax(0,1fr)_auto] p-0 max-h-[90vh]">
+                    <DialogHeader className="p-6 pb-0">
                         <DialogTitle>{editingTask ? 'Edit Task' : 'Create New Task'}</DialogTitle>
                     </DialogHeader>
-                    <TaskForm
-                        task={editingTask}
-                        onFinished={handleFormClose}
-                    />
+                    <div className="overflow-y-auto px-6">
+                        <TaskForm
+                            task={editingTask}
+                            onFinished={handleFormClose}
+                        />
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>
