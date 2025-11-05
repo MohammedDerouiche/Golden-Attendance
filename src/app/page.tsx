@@ -12,20 +12,17 @@ export default function Home() {
 
   return (
     <div className="container mx-auto p-4 md:p-8 flex-grow flex flex-col items-center justify-center">
-      {isLoading ? (
-        <div className="w-full max-w-md">
-          <Skeleton className="h-12 w-3/4 mx-auto mb-4" />
-          <Skeleton className="h-8 w-1/2 mx-auto" />
-        </div>
-      ) : selectedUser ? (
-        <>
-          <LiveClock />
+      <div className="w-full max-w-lg space-y-8">
+        <LiveClock />
+        {isLoading ? (
+          <div className="w-full">
+            <Skeleton className="h-12 w-3/4 mx-auto mb-4" />
+            <Skeleton className="h-8 w-1/2 mx-auto" />
+          </div>
+        ) : selectedUser ? (
           <Clock />
-        </>
-      ) : (
-        <>
-          <LiveClock />
-          <Card className="w-full max-w-md text-center shadow-lg">
+        ) : (
+          <Card className="w-full text-center shadow-lg">
             <CardHeader>
               <CardTitle className="font-headline text-2xl text-primary">Welcome to GoldenClock</CardTitle>
             </CardHeader>
@@ -35,8 +32,8 @@ export default function Home() {
               </p>
             </CardContent>
           </Card>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }

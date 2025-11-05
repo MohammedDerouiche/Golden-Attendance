@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { Calendar as CalendarIcon, MapPin, Edit, PlusCircle, Trash2, FileDown, Search, User as UserIcon, Copy } from 'lucide-react';
+import { Calendar as CalendarIcon, MapPin, Edit, PlusCircle, Trash2, FileDown, Search, User as UserIcon, Copy, UserCheck } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Button } from './ui/button';
 import { Calendar } from './ui/calendar';
@@ -33,6 +33,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { useDebounce } from '@/hooks/useDebounce';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { Badge } from './ui/badge';
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from './ui/tooltip';
 
 interface HistoryTableProps {
   userId: string | null;
@@ -82,11 +83,12 @@ export default function HistoryTable({ userId, canAddNew, viewingUser }: History
     
     const viewingUserName = viewingUser ? viewingUser.name : 'All_Users';
 
-    const dataToExport = attendance.map(log => ({
+    const dataToExport = attendance.map((log: any) => ({
       'User': userMap.get(log.user_id)?.name || 'Unknown',
       'Date & Time': format(new Date(log.time), 'yyyy-MM-dd HH:mm:ss'),
       'Action': log.action,
       'Status': log.status,
+      'Replacement User': log.replacement?.name || 'N/A',
       'Latitude': log.latitude,
       'Longitude': log.longitude,
       'Notes': log.notes || 'N/A',
@@ -245,6 +247,7 @@ export default function HistoryTable({ userId, canAddNew, viewingUser }: History
               <TableHead>Action</TableHead>
               <TableHead>Location</TableHead>
               <TableHead>Notes</TableHead>
+              <TableHead>Replacement</TableHead>
               {canEdit && <TableHead className="text-right">Actions</TableHead>}
             </TableRow>
           </TableHeader>
@@ -257,16 +260,17 @@ export default function HistoryTable({ userId, canAddNew, viewingUser }: History
                   <TableCell><Skeleton className="h-5 w-16" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-8" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-24" /></TableCell>
+                  <TableCell><Skeleton className="h-5 w-24" /></TableCell>
                   {canEdit && <TableCell className="text-right"><Skeleton className="h-8 w-16 ml-auto" /></TableCell>}
                 </TableRow>
               ))}
-            {error && <TableRow><TableCell colSpan={canEdit ? (showUserColumn ? 6: 5): (showUserColumn ? 5: 4)} className="text-center text-destructive">Failed to load history.</TableCell></TableRow>}
+            {error && <TableRow><TableCell colSpan={canEdit ? (showUserColumn ? 7: 6): (showUserColumn ? 6: 5)} className="text-center text-destructive">Failed to load history.</TableCell></TableRow>}
             {!isLoading && attendance?.length === 0 && (
               <TableRow>
-                <TableCell colSpan={canEdit ? (showUserColumn ? 6: 5): (showUserColumn ? 5: 4)} className="text-center">No records found for the selected period.</TableCell>
+                <TableCell colSpan={canEdit ? (showUserColumn ? 7: 6): (showUserColumn ? 6: 5)} className="text-center">No records found for the selected period.</TableCell>
               </TableRow>
             )}
-            {attendance?.map((log) => {
+            {attendance?.map((log: any) => {
               const logUser = userMap.get(log.user_id);
               return (
                 <TableRow key={log.id}>
@@ -298,7 +302,25 @@ export default function HistoryTable({ userId, canAddNew, viewingUser }: History
                         </Button>
                     ) : 'N/A'}
                     </TableCell>
-                    <TableCell>{log.notes || 'N/A'}</TableCell>
+                    <TableCell>
+                      {log.notes}
+                    </TableCell>
+                    <TableCell>
+                      {log.replacement ? (
+                        <TooltipProvider>
+                           <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge variant="secondary" className="gap-1.5 cursor-default">
+                                <UserCheck className="h-3 w-3" /> {log.replacement.name}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Replacement User</p>
+                            </TooltipContent>
+                           </Tooltip>
+                        </TooltipProvider>
+                      ) : 'N/A'}
+                    </TableCell>
                     {canEdit && (
                     <TableCell className="text-right">
                         <Button variant="ghost" size="icon" onClick={() => handleDuplicate(log)}>
@@ -351,3 +373,5 @@ export default function HistoryTable({ userId, canAddNew, viewingUser }: History
     </>
   );
 }
+
+    

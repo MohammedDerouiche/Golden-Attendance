@@ -9,9 +9,10 @@ interface TaskListProps {
   onEdit: (task: Task) => void;
   onDelete: () => void;
   onStatusChange: () => void;
+  onView: (task: Task) => void;
 }
 
-export default function TaskList({ tasks, onEdit, onDelete, onStatusChange }: TaskListProps) {
+export default function TaskList({ tasks, onEdit, onDelete, onStatusChange, onView }: TaskListProps) {
   if (tasks.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center text-center p-12 border-2 border-dashed rounded-lg">
@@ -30,6 +31,7 @@ export default function TaskList({ tasks, onEdit, onDelete, onStatusChange }: Ta
           onEdit={onEdit}
           onDelete={onDelete}
           onStatusChange={onStatusChange}
+          onView={onView}
         />
       ))}
     </div>

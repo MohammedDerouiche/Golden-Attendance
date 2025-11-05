@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import useSWR from 'swr';
@@ -18,14 +19,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Label } from '@/components/ui/label';
-import { format } from 'date-fns';
+import { format, endOfDay } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import TaskDetailDialog from '@/components/tasks/TaskDetailDialog';
+import type { DateRange } from 'react-day-picker';
 
 export default function TasksPage() {
     const { selectedUser, users, isLoading: isUserLoading } = useSelectedUser();
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingTask, setEditingTask] = useState<Task | null>(null);
+    const [viewingTask, setViewingTask] = useState<Task | null>(null);
     const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
 
     const [filters, setFilters] = useState({
@@ -34,7 +38,8 @@ export default function TasksPage() {
         assignedTo: undefined as string | undefined,
         groupId: undefined as string | undefined,
     });
-    const [dateFilter, setDateFilter] = useState<Date | undefined>(new Date());
+    // Default to showing all overdue and today's tasks
+    const [dateFilter, setDateFilter] = useState<DateRange | undefined>({ from: undefined, to: new Date() });
 
     const { data: taskGroups, isLoading: isLoadingGroups, mutate: mutateGroups } = useSWR('task_groups', getTaskGroups);
 
@@ -61,6 +66,29 @@ export default function TasksPage() {
     const handleFilterChange = (filterName: keyof typeof filters, value: string) => {
         setFilters(prev => ({ ...prev, [filterName]: value === 'all' ? undefined : value }));
     };
+
+    const handleDateSelect = (day: Date | undefined) => {
+        if (day) {
+            // When a specific day is picked, filter from start of time up to end of that day.
+            setDateFilter({ from: undefined, to: endOfDay(day) });
+        } else {
+            // When cleared, revert to default (overdue + today)
+            setDateFilter({ from: undefined, to: new Date() });
+        }
+    };
+
+    const handleStatusChange = () => {
+        mutate();
+        if (viewingTask) {
+            // Optimistically update the viewing task or refetch it
+            const updatedTask = tasks?.find(t => t.id === viewingTask.id);
+            if (updatedTask) {
+                 setViewingTask(updatedTask);
+            } else {
+                 setViewingTask(null);
+            }
+        }
+    }
 
     if (isUserLoading) {
         return (
@@ -123,6 +151,7 @@ export default function TasksPage() {
                                 <SelectItem value="not_started">Not Started</SelectItem>
                                 <SelectItem value="in_progress">In Progress</SelectItem>
                                 <SelectItem value="completed">Completed</SelectItem>
+                                <SelectItem value="undone">Undone</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -135,6 +164,7 @@ export default function TasksPage() {
                                 <SelectItem value="low">Low</SelectItem>
                                 <SelectItem value="medium">Medium</SelectItem>
                                 <SelectItem value="high">High</SelectItem>
+                                <SelectItem value="urgent">Urgent</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -159,7 +189,7 @@ export default function TasksPage() {
                         </Select>
                     </div>
                      <div className="space-y-1.5">
-                        <Label>Due Date</Label>
+                        <Label>Due On or Before</Label>
                          <div className="relative">
                             <Popover>
                                 <PopoverTrigger asChild>
@@ -167,30 +197,30 @@ export default function TasksPage() {
                                         variant={"outline"}
                                         className={cn(
                                         "w-full justify-start text-left font-normal",
-                                        !dateFilter && "text-muted-foreground"
+                                        !dateFilter?.to && "text-muted-foreground"
                                         )}
                                     >
                                         <CalendarIcon className="mr-2 h-4 w-4" />
-                                        {dateFilter ? format(dateFilter, "PPP") : <span>All Dates</span>}
+                                        {dateFilter?.to ? format(dateFilter.to, "PPP") : <span>All Dates</span>}
                                     </Button>
                                 </PopoverTrigger>
                                 <PopoverContent className="w-auto p-0" align="start">
                                 <Calendar
                                     mode="single"
-                                    selected={dateFilter}
-                                    onSelect={setDateFilter}
+                                    selected={dateFilter?.to}
+                                    onSelect={handleDateSelect}
                                     initialFocus
                                 />
                                 </PopoverContent>
                             </Popover>
-                            {dateFilter && (
+                            {dateFilter?.to && (
                                 <Button
                                     variant="ghost"
                                     size="icon"
                                     className="h-6 w-6 absolute right-1 top-1/2 -translate-y-1/2"
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        setDateFilter(undefined);
+                                        setDateFilter({ from: undefined, to: undefined });
                                     }}
                                 >
                                     <X className="h-4 w-4"/>
@@ -214,14 +244,16 @@ export default function TasksPage() {
                     tasks={tasks || []}
                     onEdit={handleFormOpen}
                     onDelete={mutate}
-                    onStatusChange={mutate}
+                    onStatusChange={handleStatusChange}
+                    onView={setViewingTask}
                 />
             ) : (
                  <TaskListTable
                     tasks={tasks || []}
                     onEdit={handleFormOpen}
                     onDelete={mutate}
-                    onStatusChange={mutate}
+                    onStatusChange={handleStatusChange}
+                    onView={setViewingTask}
                 />
             )}
 
@@ -238,6 +270,15 @@ export default function TasksPage() {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            {viewingTask && (
+                <TaskDetailDialog
+                    task={viewingTask}
+                    isOpen={!!viewingTask}
+                    onClose={() => setViewingTask(null)}
+                    onStatusChange={handleStatusChange}
+                />
+            )}
         </div>
     );
 }

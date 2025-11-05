@@ -13,6 +13,7 @@ const statusConfig: Record<TaskStatus, { name: string; color: string }> = {
     not_started: { name: 'Not Started', color: '#64748b' }, // slate-500
     in_progress: { name: 'In Progress', color: '#f59e0b' }, // amber-500
     completed: { name: 'Completed', color: '#16a34a' },   // green-600
+    undone: { name: 'Undone', color: '#dc2626' }, // red-600
 };
 
 const RADIAN = Math.PI / 180;
@@ -37,10 +38,13 @@ export default function TaskStatusPieChart({ tasks }: TaskStatusPieChartProps) {
             not_started: 0,
             in_progress: 0,
             completed: 0,
+            undone: 0,
         };
 
         tasks.forEach(task => {
-            counts[task.status]++;
+            if (counts[task.status] !== undefined) {
+                counts[task.status]++;
+            }
         });
 
         return Object.entries(counts).map(([status, count]) => ({
@@ -61,7 +65,7 @@ export default function TaskStatusPieChart({ tasks }: TaskStatusPieChartProps) {
       <ResponsiveContainer>
         <PieChart>
           <Pie
-            data={chartData}
+            data={chartData.filter(d => d.value > 0)}
             cx="50%"
             cy="50%"
             labelLine={false}
@@ -72,7 +76,7 @@ export default function TaskStatusPieChart({ tasks }: TaskStatusPieChartProps) {
             stroke="hsl(var(--background))"
             strokeWidth={3}
           >
-            {chartData.map((entry, index) => (
+            {chartData.filter(d => d.value > 0).map((entry, index) => (
               <Cell key={`cell-${index}`} fill={entry.color} />
             ))}
           </Pie>

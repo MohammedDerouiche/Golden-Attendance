@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -15,6 +14,7 @@ import MonthlyHoursChart from '@/components/charts/MonthlyHoursChart';
 import TopEmployeesChart from '@/components/charts/TopEmployeesChart';
 import AttendanceHeatmap from '@/components/charts/AttendanceHeatmap';
 import TaskStatusPieChart from '@/components/charts/TaskStatusPieChart';
+import AllEmployeesDailyHoursChart from '@/components/charts/AllEmployeesDailyHoursChart';
 import { Check, X, CalendarOff, Clock } from 'lucide-react';
 
 // Helper function to calculate total hours from attendance records
@@ -265,15 +265,22 @@ export default function StatisticsPage() {
         </Card>
 
          {currentUser.role === 'admin' && (
-            <Card>
-                <CardHeader>
-                    <CardTitle>Top Employees by Hours</CardTitle>
-                    <CardDescription>Ranking of employees by total hours in {monthName}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <TopEmployeesChart dateRange={dateRange} />
-                </CardContent>
-            </Card>
+            <>
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Top Employees by Hours</CardTitle>
+                        <CardDescription>Ranking of employees by total hours in {monthName}</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <TopEmployeesChart dateRange={dateRange} />
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="pt-6">
+                        <AllEmployeesDailyHoursChart dateRange={dateRange} />
+                    </CardContent>
+                </Card>
+            </>
         )}
       </div>
     </div>

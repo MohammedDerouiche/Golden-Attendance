@@ -2,6 +2,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import useSWR from 'swr';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,15 +12,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { getAttendanceForUser, updateUser } from '@/lib/supabase/api';
-import type { Attendance, User } from '@/lib/supabase/types';
-import { format, differenceInSeconds, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isFriday } from 'date-fns';
-import { Calendar as CalendarIcon, DollarSign, Save, FileDown, Target, Hourglass } from 'lucide-react';
+import { getAttendanceForUser, getTasks, updateUser, getPenaltySettings } from '@/lib/supabase/api';
+import type { Attendance, User, Task, TaskPriority, PenaltySetting } from '@/lib/supabase/types';
+import { format, differenceInSeconds, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isFriday, isPast, isToday } from 'date-fns';
+import { Calendar as CalendarIcon, DollarSign, Save, FileDown, Target, Hourglass, AlertTriangle, Briefcase, Check, Info } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { DateRange } from 'react-day-picker';
 import { exportToExcel, generateFileName } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-
 
 const calculateTotalHoursFromAttendance = (attendance: Attendance[]) => {
     let totalSeconds = 0;
@@ -101,6 +101,25 @@ const calculateMonthlyTargetHours = (user: User, month: Date): number => {
     return targetHours;
 }
 
+const calculatePenalties = (tasks: Task[], range: DateRange, penaltySettings: Record<TaskPriority, number>): { total: number, daily: {[key: string]: number} } => {
+    let totalPenalty = 0;
+    const dailyPenalties: {[key: string]: number} = {};
+    if (!tasks || !range.from || !penaltySettings) return { total: 0, daily: {} };
+    
+    const overdueTasks = tasks.filter(task => 
+        task.due_date && isPast(new Date(task.due_date)) && task.status !== 'completed'
+    );
+    
+    overdueTasks.forEach(task => {
+        const penalty = penaltySettings[task.priority] || 0;
+        totalPenalty += penalty;
+        const dueDateStr = format(new Date(task.due_date!), 'yyyy-MM-dd');
+        dailyPenalties[dueDateStr] = (dailyPenalties[dueDateStr] || 0) + penalty;
+    });
+
+    return { total: totalPenalty, daily: dailyPenalties };
+};
+
 
 export default function SalaryPage() {
     const { selectedUser: currentUser, users, isLoading: isUserLoading, mutateUsers } = useSelectedUser();
@@ -112,12 +131,26 @@ export default function SalaryPage() {
     const [isCalculating, setIsCalculating] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
+    const { data: penaltySettingsData, isLoading: isLoadingPenalties } = useSWR('penalty_settings', getPenaltySettings);
+
+    const penaltySettings = useMemo(() => {
+        if (!penaltySettingsData) return null;
+        return penaltySettingsData.reduce((acc, setting) => {
+            acc[setting.priority as TaskPriority] = setting.amount;
+            return acc;
+        }, {} as Record<TaskPriority, number>);
+    }, [penaltySettingsData]);
+
+
     const [results, setResults] = useState<{ 
         totalHours: number;
-        salary: number;
+        grossSalary: number;
+        totalPenalties: number;
+        netSalary: number;
         targetHours: number;
         effectiveHourlyRate: number;
         attendance: Attendance[];
+        tasks: Task[];
     } | null>(null);
 
     const targetUser = useMemo(() => {
@@ -140,11 +173,11 @@ export default function SalaryPage() {
     }, [targetUser]);
     
     const handleCalculate = async () => {
-        if (!targetUser || !dateRange?.from || !monthlySalary) {
+        if (!targetUser || !dateRange?.from || !monthlySalary || !penaltySettings) {
             toast({
                 variant: 'destructive',
                 title: 'Missing Information',
-                description: 'Please select a user, date range, and ensure they have a monthly salary set.',
+                description: 'Please select a user, date range, and ensure salary and penalty settings are loaded.',
             });
             return;
         }
@@ -164,13 +197,19 @@ export default function SalaryPage() {
                 return;
             }
 
-            const attendance = await getAttendanceForUser(targetUser.id, dateRange.from, dateRange.to);
+            const [attendance, tasks] = await Promise.all([
+                getAttendanceForUser(targetUser.id, dateRange.from, dateRange.to),
+                getTasks(targetUser.id, false, {}, dateRange)
+            ]);
+            
             const totalHours = calculateTotalHoursFromAttendance(attendance);
+            const { total: totalPenalties } = calculatePenalties(tasks, dateRange, penaltySettings);
 
             const effectiveHourlyRate = Number(monthlySalary) / targetHours;
-            const salary = totalHours * effectiveHourlyRate;
+            const grossSalary = totalHours * effectiveHourlyRate;
+            const netSalary = grossSalary - totalPenalties;
             
-            setResults({ totalHours, salary, targetHours, effectiveHourlyRate, attendance });
+            setResults({ totalHours, grossSalary, totalPenalties, netSalary, targetHours, effectiveHourlyRate, attendance, tasks });
 
         } catch (error: any) {
             toast({
@@ -206,7 +245,7 @@ export default function SalaryPage() {
     }
 
     const handleExport = () => {
-        if (!results || !targetUser || !dateRange?.from) {
+        if (!results || !targetUser || !dateRange?.from || !penaltySettings) {
             toast({
                 variant: 'destructive',
                 title: 'No Data to Export',
@@ -216,17 +255,21 @@ export default function SalaryPage() {
         }
 
         const dailyHours = calculateHoursByDay(results.attendance);
+        const { daily: dailyPenalties } = calculatePenalties(results.tasks, dateRange, penaltySettings);
         const daysOfMonth = eachDayOfInterval({ start: dateRange.from, end: dateRange.to || dateRange.from });
         
         const dailyData = daysOfMonth.map(day => {
             const dayString = format(day, 'yyyy-MM-dd');
             const hoursWorked = dailyHours[dayString] || 0;
             const daySalary = hoursWorked * results.effectiveHourlyRate;
+            const dayPenalty = dailyPenalties[dayString] || 0;
             return {
                 'Date': format(day, 'PPP'),
                 'Day': format(day, 'eeee'),
                 'Hours Worked': hoursWorked.toFixed(2),
-                'Daily Salary': daySalary.toFixed(2),
+                'Daily Gross Salary': daySalary.toFixed(2),
+                'Daily Penalties': dayPenalty > 0 ? `-$${dayPenalty.toFixed(2)}` : '$0.00',
+                'Daily Net': (daySalary - dayPenalty).toFixed(2),
             };
         });
 
@@ -239,7 +282,9 @@ export default function SalaryPage() {
             { 'Date': 'Target Hours for Month', 'Day': results.targetHours.toFixed(2) },
             { 'Date': 'Effective Hourly Rate', 'Day': `$${results.effectiveHourlyRate.toFixed(2)}` },
             { 'Date': 'Total Paid Hours', 'Day': results.totalHours.toFixed(2) },
-            { 'Date': 'TOTAL CALCULATED SALARY', 'Day': `$${results.salary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`},
+            { 'Date': 'Gross Salary (from hours)', 'Day': `$${results.grossSalary.toFixed(2)}` },
+            { 'Date': 'Total Penalties', 'Day': `-$${results.totalPenalties.toFixed(2)}`},
+            { 'Date': 'FINAL NET SALARY', 'Day': `$${results.netSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`},
         ];
 
         const dataToExport = [...dailyData, ...summaryData];
@@ -248,7 +293,7 @@ export default function SalaryPage() {
     };
 
 
-    if (isUserLoading) {
+    if (isUserLoading || isLoadingPenalties) {
         return (
             <div className="container mx-auto p-4 md:p-8">
                 <Skeleton className="h-10 w-1/4 mb-4" />
@@ -344,7 +389,7 @@ export default function SalaryPage() {
                         </div>
 
                         <div className="flex flex-col gap-2">
-                            <Button onClick={handleCalculate} disabled={isCalculating} size="lg">
+                            <Button onClick={handleCalculate} disabled={isCalculating || isLoadingPenalties} size="lg">
                                 <DollarSign className="mr-2 h-5 w-5" />
                                 {isCalculating ? 'Calculating...' : 'Calculate Salary'}
                             </Button>
@@ -372,27 +417,38 @@ export default function SalaryPage() {
                             <CardDescription>{`For ${targetUser.name} in ${format(dateRange.from, 'MMMM yyyy')}`}</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-                                <div className="bg-background/50 p-4 rounded-lg">
-                                    <p className="text-sm text-muted-foreground flex items-center justify-center gap-2"><Target className="h-4 w-4"/> Target Hours</p>
-                                    <p className="text-2xl font-bold">{results.targetHours.toFixed(2)}</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-center">
+                                <div className="space-y-4">
+                                     <div className="bg-background/50 p-4 rounded-lg">
+                                        <p className="text-sm text-muted-foreground flex items-center justify-center gap-2"><Target className="h-4 w-4" /> Target Hours</p>
+                                        <p className="text-2xl font-bold">{results.targetHours.toFixed(2)}h</p>
+                                    </div>
+                                    <div className="bg-background/50 p-4 rounded-lg">
+                                        <p className="text-sm text-muted-foreground flex items-center justify-center gap-2"><Briefcase className="h-4 w-4" /> Hours Worked</p>
+                                        <p className="text-2xl font-bold">{results.totalHours.toFixed(2)}h</p>
+                                    </div>
                                 </div>
-                                <div className="bg-background/50 p-4 rounded-lg">
-                                    <p className="text-sm text-muted-foreground flex items-center justify-center gap-2"><Hourglass className="h-4 w-4" /> Hours Worked</p>
-                                    <p className="text-2xl font-bold">{results.totalHours.toFixed(2)}</p>
-                                </div>
-                                 <div className="bg-background/50 p-4 rounded-lg">
-                                    <p className="text-sm text-muted-foreground flex items-center justify-center gap-2"><DollarSign className="h-4 w-4" /> Effective Rate</p>
-                                    <p className="text-2xl font-bold">${results.effectiveHourlyRate.toFixed(2)}/hr</p>
+                                <div className="space-y-4">
+                                    <div className="bg-background/50 p-4 rounded-lg">
+                                        <p className="text-sm text-muted-foreground flex items-center justify-center gap-2"><Hourglass className="h-4 w-4" /> Gross Salary (from hours)</p>
+                                        <p className="text-2xl font-bold text-green-600">${results.grossSalary.toFixed(2)}</p>
+                                    </div>
+                                    <div className="bg-background/50 p-4 rounded-lg">
+                                        <p className="text-sm text-muted-foreground flex items-center justify-center gap-2"><AlertTriangle className="h-4 w-4" /> Task Penalties</p>
+                                        <p className="text-2xl font-bold text-destructive">-${results.totalPenalties.toFixed(2)}</p>
+                                    </div>
                                 </div>
                             </div>
-                            <div className="text-center pt-4 border-t">
-                                <p className="text-base text-muted-foreground">Calculated Salary</p>
+                            <div className="text-center pt-6 border-t">
+                                <p className="text-base text-muted-foreground">Final Net Salary</p>
                                  <p className="text-5xl font-bold text-primary">
-                                    ${results.salary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    ${results.netSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </p>
                                 {results.totalHours < results.targetHours && (
-                                    <Badge variant="secondary" className="mt-2">Salary is pro-rated based on hours worked</Badge>
+                                    <Badge variant="secondary" className="mt-2 flex items-center justify-center gap-2 max-w-fit mx-auto">
+                                        <Info className="h-3 w-3" />
+                                        Salary is pro-rated based on hours worked
+                                    </Badge>
                                 )}
                             </div>
                         </CardContent>

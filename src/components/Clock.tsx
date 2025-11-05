@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
-import { createAttendance, getTodaysAttendanceForUser, markAsDayOff, markAsAbsent, getMonthlyAttendanceForUser } from '@/lib/supabase/api';
+import { createAttendance, getTodaysAttendanceForUser, markAsDayOff, markAsAbsent, getMonthlyAttendanceForUser, createOrUpdateManualRecord } from '@/lib/supabase/api';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card';
 import {
@@ -17,17 +17,25 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { format, formatDistanceToNow, parseISO, getDay, startOfMonth, endOfMonth, eachDayOfInterval, isFriday } from 'date-fns';
+import { format, formatDistanceToNow, parseISO, getDay, startOfMonth, endOfMonth, eachDayOfInterval, isFriday, setHours, setMinutes } from 'date-fns';
 import { Skeleton } from './ui/skeleton';
-import { LogIn, LogOut, CheckCircle2, DollarSign, XCircle, CalendarCheck, Target, Hourglass, Calendar as CalendarIcon } from 'lucide-react';
-import type { Attendance, AttendanceStatus, User } from '@/lib/supabase/types';
+import { LogIn, LogOut, CheckCircle2, DollarSign, XCircle, CalendarCheck, Target, Hourglass, Calendar as CalendarIcon, User, Save } from 'lucide-react';
+import type { Attendance, AttendanceStatus, User as UserType } from '@/lib/supabase/types';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
+import TodaysTasks from './tasks/TodaysTasks';
+import { Label } from './ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Calendar } from './ui/calendar';
+import { Input } from './ui/input';
 
 interface LocationCoords {
   latitude: number;
   longitude: number;
 }
+
+type ActionType = 'in' | 'out' | 'day_off' | 'absent';
 
 const calculateWorkedHours = (attendance: Attendance[]): number => {
     let totalSeconds = 0;
@@ -71,7 +79,7 @@ const formatDuration = (totalSeconds: number): string => {
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
-const calculateMonthlyTargetHours = (user: User, date: Date = new Date()): number => {
+const calculateMonthlyTargetHours = (user: UserType, date: Date = new Date()): number => {
     const monthStart = startOfMonth(date);
     const monthEnd = endOfMonth(date);
     const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
@@ -93,12 +101,17 @@ const calculateMonthlyTargetHours = (user: User, date: Date = new Date()): numbe
 }
 
 export default function Clock() {
-  const { selectedUser } = useSelectedUser();
+  const { selectedUser, users } = useSelectedUser();
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [location, setLocation] = useState<LocationCoords | null>(null);
   const [liveSecondsToday, setLiveSecondsToday] = useState(0);
-  const [showConfirmation, setShowConfirmation] = useState<AttendanceStatus | null>(null);
+  
+  const [actionToConfirm, setActionToConfirm] = useState<ActionType | null>(null);
+  const [recordDate, setRecordDate] = useState(new Date());
+  const [recordTime, setRecordTime] = useState(format(new Date(), 'HH:mm'));
+
+  const [replacementUserId, setReplacementUserId] = useState<string | null>(null);
 
   const { data: todaysAttendance, mutate: mutateToday, isLoading: isLoadingToday } = useSWR(
     selectedUser ? `todays_attendance_${selectedUser.id}` : null,
@@ -151,57 +164,71 @@ export default function Clock() {
     );
   }, []);
 
-  const handleClockAction = async (action: 'in' | 'out') => {
-    if (!selectedUser) return;
-    setIsSubmitting(true);
-    try {
-      await createAttendance({
-        user_id: selectedUser.id,
-        action,
-        time: new Date().toISOString(),
-        latitude: location?.latitude,
-        longitude: location?.longitude,
-        status: 'present', // This is a regular clock in/out
-      });
-      await mutateToday();
-      await mutateMonth();
-      toast({
-        title: action === 'in' ? 'Successfully Clocked In' : 'Successfully Clocked Out',
-        description: 'Your time has been recorded.',
-      });
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: 'Error', description: error.message });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const openConfirmationDialog = (action: ActionType) => {
+    setActionToConfirm(action);
+    setRecordDate(new Date());
+    setRecordTime(format(new Date(), 'HH:mm'));
+  }
   
-  const handleStaticMark = async () => {
-     if (!selectedUser || !showConfirmation) return;
+  const handleConfirmAction = async () => {
+     if (!selectedUser || !actionToConfirm) return;
      setIsSubmitting(true);
-
+     
      try {
-        if (showConfirmation === 'day_off') {
-            const isFriday = getDay(new Date()) === 5;
-            const paidHours = isFriday 
-                ? (selectedUser.friday_target_hours || selectedUser.daily_target_hours)
-                : selectedUser.daily_target_hours;
-            await markAsDayOff(selectedUser.id, paidHours);
-        } else if (showConfirmation === 'absent') {
-            await markAsAbsent(selectedUser.id);
+        const [hours, minutes] = recordTime.split(':').map(Number);
+        let combinedDateTime = setMinutes(setHours(recordDate, hours), minutes);
+
+        let status: 'present_in' | 'present_out' | 'day_off' | 'absent' = 'present_in';
+        let paidHours: number | undefined;
+        let notes: string | undefined;
+
+        switch (actionToConfirm) {
+            case 'in':
+                status = 'present_in';
+                notes = 'Clocked in from main page';
+                break;
+            case 'out':
+                status = 'present_out';
+                notes = 'Clocked out from main page';
+                break;
+            case 'day_off':
+                status = 'day_off';
+                notes = 'Marked as Day-Off from main page';
+                const isFriday = getDay(combinedDateTime) === 5;
+                paidHours = isFriday 
+                    ? (selectedUser.friday_target_hours || selectedUser.daily_target_hours)
+                    : selectedUser.daily_target_hours;
+                break;
+            case 'absent':
+                status = 'absent';
+                notes = 'Marked as Absent from main page';
+                break;
         }
+
+        const finalReplacementId = replacementUserId === 'no-replacement' ? null : replacementUserId;
+
+        await createOrUpdateManualRecord({
+            userId: selectedUser.id,
+            time: combinedDateTime,
+            status: status,
+            notes: notes,
+            paidHours: paidHours,
+            replacementUserId: finalReplacementId,
+        });
+
         await mutateToday();
         await mutateMonth();
         toast({
             title: 'Successfully Recorded',
-            description: 'Your status for today has been recorded.',
+            description: 'Your attendance has been recorded.',
         });
 
      } catch (error: any) {
         toast({ variant: 'destructive', title: 'Error', description: error.message });
      } finally {
         setIsSubmitting(false);
-        setShowConfirmation(null);
+        setActionToConfirm(null);
+        setReplacementUserId(null);
      }
   }
   
@@ -281,6 +308,26 @@ export default function Clock() {
     return isFriday ? (selectedUser.friday_target_hours || selectedUser.daily_target_hours) : selectedUser.daily_target_hours;
   }, [selectedUser])
 
+  const otherUsers = useMemo(() => users.filter(u => u.id !== selectedUser?.id), [users, selectedUser]);
+
+  const dialogContent = useMemo(() => {
+    if (!actionToConfirm) return { title: '', description: '' };
+    switch (actionToConfirm) {
+        case 'in':
+            return { title: 'Confirm Clock In', description: 'Please confirm the date and time for your clock-in record.' };
+        case 'out':
+            return { title: 'Confirm Clock Out', description: 'Please confirm the date and time for your clock-out record.' };
+        case 'day_off':
+            return { title: 'Confirm Day-Off', description: 'This will create a paid Day-Off record for the selected date.' };
+        case 'absent':
+            return { title: 'Confirm Absence', description: 'This will create an unpaid Absence record for the selected date.' };
+    }
+  }, [actionToConfirm]);
+
+  const isTimeVisible = actionToConfirm === 'in' || actionToConfirm === 'out';
+  const isReplacementVisible = actionToConfirm === 'day_off' || actionToConfirm === 'absent';
+
+
   if (isLoadingToday || isLoadingMonth) {
       return (
         <Card className="w-full max-w-lg text-center shadow-lg">
@@ -346,18 +393,18 @@ export default function Clock() {
             )}
 
             <div className="grid grid-cols-2 gap-4 pt-2">
-                <Button size="lg" className="w-full text-lg py-8 bg-green-600 hover:bg-green-700 text-white" onClick={() => handleClockAction('in')} disabled={isSubmitting || !canClockIn}>
+                <Button size="lg" className="w-full text-lg py-8 bg-green-600 hover:bg-green-700 text-white" onClick={() => openConfirmationDialog('in')} disabled={isSubmitting || !canClockIn}>
                     <LogIn className="mr-2 h-6 w-6" /> Clock In
                 </Button>
-                <Button size="lg" variant="destructive" className="w-full text-lg py-8" onClick={() => handleClockAction('out')} disabled={isSubmitting || !canClockOut}>
+                <Button size="lg" variant="destructive" className="w-full text-lg py-8" onClick={() => openConfirmationDialog('out')} disabled={isSubmitting || !canClockOut}>
                     <LogOut className="mr-2 h-6 w-6" /> Clock Out
                 </Button>
             </div>
             <div className="grid grid-cols-2 gap-4 pt-2">
-                <Button size="lg" variant="secondary" className="w-full text-lg py-8 bg-slate-600 hover:bg-slate-700 text-white" onClick={() => setShowConfirmation('absent')} disabled={isSubmitting || hasStaticMarkToday || canClockOut}>
+                <Button size="lg" variant="secondary" className="w-full text-lg py-8 bg-slate-600 hover:bg-slate-700 text-white" onClick={() => openConfirmationDialog('absent')} disabled={isSubmitting || hasStaticMarkToday || canClockOut}>
                     <XCircle className="mr-2 h-6 w-6" /> Absent
                 </Button>
-                <Button size="lg" className="w-full text-lg py-8 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => setShowConfirmation('day_off')} disabled={isSubmitting || hasStaticMarkToday || canClockOut}>
+                <Button size="lg" className="w-full text-lg py-8 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => openConfirmationDialog('day_off')} disabled={isSubmitting || hasStaticMarkToday || canClockOut}>
                     <CalendarCheck className="mr-2 h-6 w-6" /> Day-Off
                 </Button>
             </div>
@@ -366,6 +413,8 @@ export default function Clock() {
             <p>{getDailyStatusMessage()}</p>
         </CardFooter>
         </Card>
+
+        {selectedUser && <TodaysTasks user={selectedUser} />}
 
         <Card className="shadow-lg animate-fade-in">
              <CardHeader>
@@ -387,22 +436,68 @@ export default function Clock() {
         </Card>
     </div>
 
-     <AlertDialog open={!!showConfirmation} onOpenChange={(isOpen) => !isOpen && setShowConfirmation(null)}>
+    <AlertDialog open={!!actionToConfirm} onOpenChange={(isOpen) => !isOpen && setActionToConfirm(null)}>
         <AlertDialogContent>
             <AlertDialogHeader>
-            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-                {showConfirmation === 'day_off' 
-                    ? "This will replace any hours worked today with a full paid Day-Off. This action cannot be undone."
-                    : "This will replace any hours worked today with an unpaid absence record. This action cannot be undone."
-                }
-            </AlertDialogDescription>
+                <AlertDialogTitle>{dialogContent.title}</AlertDialogTitle>
+                <AlertDialogDescription>{dialogContent.description}</AlertDialogDescription>
             </AlertDialogHeader>
+            <div className="space-y-4 py-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <Label htmlFor="record-date">Date</Label>
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    id="record-date"
+                                    variant="outline"
+                                    className={cn("w-full justify-start text-left font-normal", !recordDate && "text-muted-foreground")}
+                                >
+                                    <CalendarIcon className="mr-2 h-4 w-4" />
+                                    {recordDate ? format(recordDate, "PPP") : <span>Pick a date</span>}
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0">
+                                <Calendar mode="single" selected={recordDate} onSelect={(d) => d && setRecordDate(d)} initialFocus />
+                            </PopoverContent>
+                        </Popover>
+                    </div>
+                    {isTimeVisible && (
+                        <div className="space-y-2">
+                            <Label htmlFor="record-time">Time</Label>
+                            <Input id="record-time" type="time" value={recordTime} onChange={(e) => setRecordTime(e.target.value)} />
+                        </div>
+                    )}
+                </div>
+
+                {isReplacementVisible && (
+                    <div className="space-y-2">
+                        <Label htmlFor="replacement-user">Replacement User (Optional)</Label>
+                        <Select onValueChange={setReplacementUserId} value={replacementUserId || 'no-replacement'}>
+                            <SelectTrigger id="replacement-user">
+                                <SelectValue placeholder="Select a user to cover your shift" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="no-replacement">None</SelectItem>
+                                {otherUsers.map(user => (
+                                    <SelectItem key={user.id} value={user.id}>
+                                        <div className="flex items-center gap-2">
+                                            <User className="h-4 w-4" />
+                                            {user.name}
+                                        </div>
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                )}
+            </div>
             <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleStaticMark} className={showConfirmation === 'absent' ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary'}>
-                Confirm
-            </AlertDialogAction>
+                <AlertDialogCancel onClick={() => setReplacementUserId(null)}>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleConfirmAction} disabled={isSubmitting}>
+                    <Save className="mr-2 h-4 w-4" />
+                    {isSubmitting ? 'Saving...' : 'Confirm'}
+                </AlertDialogAction>
             </AlertDialogFooter>
         </AlertDialogContent>
     </AlertDialog>

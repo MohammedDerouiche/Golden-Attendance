@@ -31,7 +31,7 @@ import { createOrUpdateManualRecord } from '@/lib/supabase/api';
 import type { Attendance, User } from '@/lib/supabase/types';
 import { cn } from '@/lib/utils';
 import { format, setHours, setMinutes, setSeconds, startOfDay, getDay } from 'date-fns';
-import { CalendarIcon } from 'lucide-react';
+import { CalendarIcon, User as UserIcon } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { Input } from './ui/input';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
@@ -43,6 +43,7 @@ const attendanceSchema = z.object({
   status: z.enum(['present_in', 'present_out', 'day_off', 'absent']),
   notes: z.string().optional().nullable(),
   paidHours: z.coerce.number().optional().nullable(),
+  replacement_user_id: z.string().optional().nullable(),
 });
 
 type AttendanceFormValues = z.infer<typeof attendanceSchema>;
@@ -68,6 +69,7 @@ export default function EditAttendanceSheet({ isOpen, onClose, record, user, isD
         status: 'present_in',
         notes: '',
         paidHours: undefined,
+        replacement_user_id: null,
     },
   });
   
@@ -87,6 +89,7 @@ export default function EditAttendanceSheet({ isOpen, onClose, record, user, isD
               status: status,
               notes: record.notes,
               paidHours: record.paid_hours || undefined,
+              replacement_user_id: record.replacement_user_id || null,
           });
       } else {
           form.reset({
@@ -96,6 +99,7 @@ export default function EditAttendanceSheet({ isOpen, onClose, record, user, isD
               status: 'present_in',
               notes: '',
               paidHours: undefined,
+              replacement_user_id: null,
           });
       }
     }
@@ -107,6 +111,9 @@ export default function EditAttendanceSheet({ isOpen, onClose, record, user, isD
 
   const isTimeVisible = watchedStatus === 'present_in' || watchedStatus === 'present_out';
   const isPaidHoursVisible = watchedStatus === 'day_off';
+  const isReplacementVisible = watchedStatus === 'day_off' || watchedStatus === 'absent';
+
+  const otherUsers = useMemo(() => users.filter(u => u.id !== (watchedUserId || user.id)), [users, watchedUserId, user.id]);
 
   const targetUserForSubmission = useMemo(() => {
     return users.find(u => u.id === watchedUserId) || user;
@@ -146,6 +153,7 @@ export default function EditAttendanceSheet({ isOpen, onClose, record, user, isD
         }
         
       const recordIdToUpdate = isDuplicating ? null : record?.id;
+      const finalReplacementId = values.replacement_user_id === 'no-replacement' ? null : values.replacement_user_id;
 
       await createOrUpdateManualRecord({
           recordId: recordIdToUpdate,
@@ -154,6 +162,7 @@ export default function EditAttendanceSheet({ isOpen, onClose, record, user, isD
           status: values.status,
           notes: values.notes,
           paidHours: values.paidHours,
+          replacementUserId: finalReplacementId,
       });
 
       toast({
@@ -302,6 +311,31 @@ export default function EditAttendanceSheet({ isOpen, onClose, record, user, isD
                     />
                  )}
             </div>
+             {isReplacementVisible && (
+                <FormField
+                    control={form.control}
+                    name="replacement_user_id"
+                    render={({ field }) => (
+                        <FormItem>
+                            <FormLabel>Replacement User (Optional)</FormLabel>
+                             <Select onValueChange={field.onChange} value={field.value || 'no-replacement'}>
+                                <FormControl>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select a replacement" />
+                                </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                    <SelectItem value="no-replacement">None</SelectItem>
+                                    {otherUsers.map(u => (
+                                        <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <FormMessage />
+                        </FormItem>
+                    )}
+                />
+             )}
              <FormField
               control={form.control}
               name="notes"
@@ -330,3 +364,4 @@ export default function EditAttendanceSheet({ isOpen, onClose, record, user, isD
   );
 }
 
+    

@@ -1,11 +1,8 @@
 
 
-
-
-
 import { supabase } from './client';
-import type { UserInsert, UserUpdate, AttendanceInsert, AttendanceUpdate, Attendance, ActiveEmployee, Task, TaskInsert, TaskUpdate, TaskStatus, TaskPriority, TaskRecurrence, User, TaskGroup } from './types';
-import { startOfDay, endOfDay, addDays, addWeeks, addMonths, startOfMonth, endOfMonth, isFriday } from 'date-fns';
+import type { UserInsert, UserUpdate, AttendanceInsert, AttendanceUpdate, Attendance, ActiveEmployee, Task, TaskInsert, TaskUpdate, TaskStatus, TaskPriority, TaskRecurrence, User, TaskGroup, PenaltySetting } from './types';
+import { startOfDay, endOfDay, addDays, addWeeks, addMonths, startOfMonth, endOfMonth, isFriday, eachDayOfInterval as fnsEachDayOfInterval } from 'date-fns';
 import type { DateRange } from 'react-day-picker';
 
 // User Functions
@@ -43,7 +40,7 @@ export const getAttendanceForUser = async (
 ): Promise<Attendance[]> => {
   let query = supabase
     .from('attendance')
-    .select('*')
+    .select('*, replacement:replacement_user_id(id, name)')
     .order('time', { ascending: false });
 
   if (userId) {
@@ -70,7 +67,7 @@ export const getAttendanceForUser = async (
 
   const { data, error } = await query;
   if (error) throw error;
-  return data;
+  return data as any;
 };
 
 export const getTodaysAttendanceForUser = async (userId: string): Promise<Attendance[]> => {
@@ -95,7 +92,7 @@ export const getMonthlyAttendanceForUser = async (userId: string, date: Date): P
     
     const { data, error } = await supabase
         .from('attendance')
-        .select('*')
+        .select('*_')
         .eq('user_id', userId)
         .gte('time', monthStart.toISOString())
         .lte('time', monthEnd.toISOString())
@@ -107,7 +104,7 @@ export const getMonthlyAttendanceForUser = async (userId: string, date: Date): P
 
 
 export const getAttendanceById = async (id: string) => {
-    const { data, error } = await supabase.from('attendance').select('*').eq('id', id).single();
+    const { data, error } = await supabase.from('attendance').select('*_').eq('id', id).single();
     if (error) throw error;
     return data;
 };
@@ -133,7 +130,7 @@ export const deleteAttendance = async (id: string) => {
 export const getLastAttendanceForUser = async (userId: string) => {
     const { data, error } = await supabase
         .from('attendance')
-        .select('*')
+        .select('*_')
         .eq('user_id', userId)
         .order('time', { ascending: false })
         .limit(1)
@@ -152,31 +149,34 @@ export const getActiveEmployees = async (): Promise<ActiveEmployee[]> => {
     return data;
 };
 
-export const markAsDayOff = async (userId: string, paidHours: number) => {
+export const markAsDayOff = async (userId: string, paidHours: number, replacementUserId?: string | null) => {
     const { error } = await supabase.rpc('mark_day_off_for_user', {
         p_user_id: userId,
         p_paid_hours: paidHours,
+        p_replacement_user_id: replacementUserId,
     });
     if (error) throw error;
     return true;
 };
 
-export const markAsAbsent = async (userId: string) => {
+export const markAsAbsent = async (userId: string, replacementUserId?: string | null) => {
     const { error } = await supabase.rpc('mark_absent_for_user', {
         p_user_id: userId,
+        p_replacement_user_id: replacementUserId,
     });
     if (error) throw error;
     return true;
 };
 
 export const createOrUpdateManualRecord = async (
-    { recordId, userId, time, status, notes, paidHours }: 
-    { recordId?: string | null, userId: string, time: Date, status: string, notes?: string | null, paidHours?: number | null }
+    { recordId, userId, time, status, notes, paidHours, replacementUserId }: 
+    { recordId?: string | null, userId: string, time: Date, status: string, notes?: string | null, paidHours?: number | null, replacementUserId?: string | null }
 ) => {
     let submission: AttendanceInsert | AttendanceUpdate = {
         user_id: userId,
         time: time.toISOString(),
         notes: notes,
+        replacement_user_id: replacementUserId,
     };
 
     switch(status) {
@@ -208,89 +208,74 @@ export const createOrUpdateManualRecord = async (
 
 // Task Functions
 export const getTasks = async (
-    userId: string | null, // Allow null for admin fetching all
-    isAdmin: boolean, 
+    userId: string | null,
+    isAdmin: boolean,
     filters: { status?: TaskStatus, priority?: TaskPriority, assignedTo?: string, groupId?: string },
-    dateFilter?: Date | DateRange
+    dateRange?: DateRange | undefined
 ): Promise<Task[]> => {
-    let query = supabase
-        .from('tasks')
-        .select(`
-            *,
-            users_created_by:created_by ( id, name ),
-            assigned_to:users!tasks_assigned_to_fkey ( id, name ),
-            task_groups ( id, name )
-        `)
-        .order('due_date', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: false });
+    // Handle the dateRange logic safely
+    const date_from = dateRange?.from ? startOfDay(dateRange.from).toISOString() : null;
+    const date_to = dateRange?.to ? endOfDay(dateRange.to).toISOString() : null;
 
-    if (!isAdmin && userId) {
-        query = query.or(`created_by.eq.${userId},assigned_to.eq.${userId}`);
-    }
-
-    if (filters.status) {
-        query = query.eq('status', filters.status);
-    }
-    if (filters.priority) {
-        query = query.eq('priority', filters.priority);
-    }
-    if (filters.assignedTo) {
-        query = query.eq('assigned_to', filters.assignedTo);
-    }
-    if (filters.groupId) {
-        query = query.eq('group_id', filters.groupId);
-    }
-
-    if (dateFilter) {
-        if (dateFilter instanceof Date) {
-            const from = startOfDay(dateFilter).toISOString();
-            const to = endOfDay(dateFilter).toISOString();
-            query = query.gte('due_date', from).lte('due_date', to);
-        } else if (dateFilter.from) {
-             const from = startOfDay(dateFilter.from).toISOString();
-             const to = endOfDay(dateFilter.to || dateFilter.from).toISOString();
-             query = query.gte('due_date', from).lte('due_date', to);
-        }
-    }
-
-    const { data, error } = await query;
+    const { data: rpcData, error } = await supabase.rpc('get_tasks_for_view', {
+        p_user_id: userId,
+        p_is_admin: isAdmin,
+        p_status: filters.status || null,
+        p_priority: filters.priority || null,
+        p_assigned_to_filter: filters.assignedTo || null,
+        p_group_id: filters.groupId || null,
+        p_date_from: date_from,
+        p_date_to: date_to,
+    });
+    
     if (error) {
-        console.error("Error fetching tasks:", error);
+        console.error("Error fetching tasks from RPC:", error);
         throw error;
-    };
-    
-    return data as unknown as Task[];
-};
-
-export const createTask = async (taskData: TaskInsert) => {
-    const { assigned_to, ...restOfTaskData } = taskData;
-
-    const assignedIds = assigned_to || [];
-
-    if (assignedIds.length === 0) {
-        // Create one unassigned task
-        const { data, error } = await supabase
-            .from('tasks')
-            .insert({ ...restOfTaskData, assigned_to: null })
-            .select()
-            .single();
-        if (error) throw error;
-        return [data];
     }
 
-    // Create a task for each assigned user
-    const tasksToInsert = assignedIds.map(userId => ({
-        ...restOfTaskData,
-        assigned_to: userId,
-    }));
-    
-    const { data, error } = await supabase
-        .from('tasks')
-        .insert(tasksToInsert)
-        .select();
+    const userIds = new Set<string>();
+    const groupIds = new Set<string>();
 
-    if (error) throw error;
-    return data;
+    rpcData.forEach(task => {
+        if (task.created_by) userIds.add(task.created_by);
+        if (task.assigned_to) userIds.add(task.assigned_to);
+        if (task.original_assignee_id) userIds.add(task.original_assignee_id);
+        if (task.group_id) groupIds.add(task.group_id);
+    });
+
+    // Proceed with fetching users and groups only if there are IDs to fetch
+    const usersPromise = userIds.size > 0 
+        ? supabase.from('users').select('id, name').in('id', Array.from(userIds))
+        : Promise.resolve({ data: [], error: null });
+
+    const groupsPromise = groupIds.size > 0
+        ? supabase.from('task_groups').select('id, name').in('id', Array.from(groupIds))
+        : Promise.resolve({ data: [], error: null });
+
+    const [
+        { data: users, error: userError },
+        { data: groups, error: groupError }
+    ] = await Promise.all([usersPromise, groupsPromise]);
+
+    if (userError) throw userError;
+    if (groupError) throw groupError;
+
+    const userMap = new Map((users || []).map(u => [u.id, u]));
+    const groupMap = new Map((groups || []).map(g => [g.id, g]));
+
+    const enrichedTasks: Task[] = rpcData.map(task => ({
+        ...(task as any), // Cast to any to handle the initial rpc data shape
+        status: task.status as TaskStatus,
+        priority: task.priority as TaskPriority,
+        recurrence_type: task.recurrence_type as TaskRecurrence,
+        allow_delay: task.allow_delay,
+        users_created_by: task.created_by ? userMap.get(task.created_by) || null : null,
+        assigned_to: task.assigned_to ? userMap.get(task.assigned_to) || null : null,
+        original_assignee: task.original_assignee_id ? userMap.get(task.original_assignee_id) || null : null,
+        task_groups: task.group_id ? groupMap.get(task.group_id) || null : null,
+    }));
+
+    return enrichedTasks;
 };
 
 const getNextDueDate = (dueDate: Date, recurrenceType: TaskRecurrence, interval?: number | null): Date | null => {
@@ -309,6 +294,90 @@ const getNextDueDate = (dueDate: Date, recurrenceType: TaskRecurrence, interval?
     }
 };
 
+export const createTask = async (taskData: TaskInsert) => {
+    const { assigned_to, due_date, recurrence_type, ...restOfTaskData } = taskData;
+
+    // --- NON-RECURRING or MULTI-ASSIGN ---
+    if (recurrence_type === 'none' || !recurrence_type) {
+        const assignedIds = assigned_to || [];
+        const tasksToInsert: Omit<Task, 'id' | 'created_at' | 'users_created_by' | 'assigned_to' | 'original_assignee' | 'task_groups'>[] = [];
+
+        if (assignedIds.length > 0) {
+            assignedIds.forEach(userId => {
+                tasksToInsert.push({ 
+                    ...restOfTaskData, 
+                    due_date: due_date ?? null,
+                    assigned_to: userId,
+                    image_urls: restOfTaskData.image_urls ? [...restOfTaskData.image_urls] : null, // Create a copy
+                });
+            });
+        } else {
+            // Unassigned task
+            tasksToInsert.push({ ...restOfTaskData, due_date: due_date ?? null, assigned_to: null, image_urls: restOfTaskData.image_urls ? [...restOfTaskData.image_urls] : null });
+        }
+
+        const { data, error } = await supabase.from('tasks').insert(tasksToInsert).select();
+        if (error) throw error;
+        return data;
+    }
+
+    // --- RECURRING TASK LOGIC ---
+    const tasksToInsert: Omit<Task, 'id' | 'created_at' | 'users_created_by' | 'assigned_to' | 'original_assignee' | 'task_groups'>[] = [];
+    const assignedId = assigned_to?.[0] || null; // Recurring tasks are assigned to one user
+    const endDate = due_date ? endOfDay(new Date(due_date)) : null;
+
+    if (!endDate) {
+        // If no end date, just create one task
+        const { data, error } = await supabase.from('tasks').insert({ ...taskData, assigned_to: assignedId, image_urls: taskData.image_urls ? [...taskData.image_urls] : null }).select();
+        if (error) throw error;
+        return data;
+    }
+    
+    // Create the "master" task to get an original_task_id
+    const { data: masterTask, error: masterError } = await supabase
+        .from('tasks')
+        .insert({
+            ...restOfTaskData,
+            recurrence_type,
+            assigned_to: assignedId,
+            due_date: due_date,
+        })
+        .select()
+        .single();
+    
+    if (masterError) throw masterError;
+    const originalId = masterTask.id;
+    
+    let currentDate = startOfDay(new Date());
+
+    while (currentDate <= endDate) {
+        tasksToInsert.push({
+            ...restOfTaskData,
+            title: taskData.title,
+            due_date: currentDate.toISOString(),
+            assigned_to: assignedId,
+            recurrence_type,
+            original_task_id: originalId,
+            image_urls: restOfTaskData.image_urls ? [...restOfTaskData.image_urls] : null, // Create a copy
+        });
+        currentDate = getNextDueDate(currentDate, recurrence_type, restOfTaskData.recurrence_interval) || addDays(endDate, 1); // Failsafe
+    }
+    
+    if (tasksToInsert.length > 0) {
+        const { error: batchError } = await supabase.from('tasks').insert(tasksToInsert);
+        if (batchError) {
+             await supabase.from('tasks').delete().eq('id', originalId); // Clean up master task on failure
+             throw batchError;
+        }
+    }
+    
+    // We can delete the master task as it's just a template now
+    await supabase.from('tasks').delete().eq('id', originalId);
+
+    return []; // Return value might need adjustment based on what the UI needs
+};
+
+
 export const updateTask = async (taskId: string, taskData: TaskUpdate) => {
     const { data: updatedTask, error } = await supabase
         .from('tasks')
@@ -320,26 +389,35 @@ export const updateTask = async (taskId: string, taskData: TaskUpdate) => {
     if (error) throw error;
 
     // Handle recurring task creation
-    if (updatedTask.status === 'completed' && updatedTask.recurrence_type && updatedTask.recurrence_type !== 'none') {
+    const shouldCreateNext = updatedTask.status === 'completed' || updatedTask.status === 'undone';
+
+    if (shouldCreateNext && updatedTask.recurrence_type && updatedTask.recurrence_type !== 'none' && updatedTask.original_task_id) {
+        
+        // Find the "master" due date from the original task to continue the series
+        const { data: originalTask } = await supabase.from('tasks').select('due_date').eq('id', updatedTask.original_task_id).single();
+        const seriesEndDate = originalTask?.due_date ? new Date(originalTask.due_date) : null;
+        
         const currentDueDate = updatedTask.due_date ? new Date(updatedTask.due_date) : new Date();
         const nextDueDate = getNextDueDate(currentDueDate, updatedTask.recurrence_type, updatedTask.recurrence_interval);
 
-        if (nextDueDate) {
-            const newTask: Omit<TaskInsert, 'assigned_to'> & { assigned_to: string | null } = {
+        if (nextDueDate && seriesEndDate && nextDueDate <= seriesEndDate) {
+            const newTask: TaskInsert = {
                 title: updatedTask.title,
                 description: updatedTask.description,
                 status: 'not_started',
                 priority: updatedTask.priority,
                 due_date: nextDueDate.toISOString(),
                 created_by: updatedTask.created_by,
-                assigned_to: updatedTask.assigned_to, 
+                assigned_to: updatedTask.assigned_to ? [updatedTask.assigned_to] : [],
                 recurrence_type: updatedTask.recurrence_type,
                 recurrence_interval: updatedTask.recurrence_interval,
-                original_task_id: updatedTask.original_task_id || updatedTask.id, // Chain them
-                group_id: updatedTask.group_id
+                original_task_id: updatedTask.original_task_id,
+                group_id: updatedTask.group_id,
+                image_urls: updatedTask.image_urls,
+                allow_delay: updatedTask.allow_delay,
             };
-            // Create a single recurring task, not multiple
-             await supabase.from('tasks').insert(newTask);
+
+            await supabase.from('tasks').insert(newTask);
         }
     }
 
@@ -347,20 +425,122 @@ export const updateTask = async (taskId: string, taskData: TaskUpdate) => {
 };
 
 export const deleteTask = async (taskId: string) => {
-    const { error } = await supabase.from('tasks').delete().eq('id', taskId);
-    if (error) throw error;
+    // First, get the image URLs for the task being deleted.
+    const { data: taskData, error: fetchError } = await supabase
+      .from('tasks')
+      .select('image_urls')
+      .eq('id', taskId)
+      .single();
+  
+    if (fetchError && fetchError.code !== 'PGRST116') { // Ignore "single row not found" error
+      console.error('Error fetching task for deletion:', fetchError);
+      throw fetchError;
+    }
+  
+    // Now, delete the task itself.
+    const { error: deleteError } = await supabase.from('tasks').delete().eq('id', taskId);
+    if (deleteError) {
+      console.error('Error deleting task:', deleteError);
+      throw deleteError;
+    }
+  
+    // If the task had images, check if they are used elsewhere before deleting from storage.
+    if (taskData?.image_urls && taskData.image_urls.length > 0) {
+      for (const imageUrl of taskData.image_urls) {
+        // Check if any other task uses this image URL.
+        const { count, error: countError } = await supabase
+          .from('tasks')
+          .select('id', { count: 'exact', head: true })
+          .contains('image_urls', [imageUrl]);
+  
+        if (countError) {
+          console.error(`Error checking image usage for ${imageUrl}:`, countError);
+          continue;
+        }
+  
+        if (count === 0) {
+          try {
+            await deleteTaskImage(imageUrl);
+          } catch (storageError) {
+            console.error(`Failed to delete image ${imageUrl} from storage:`, storageError);
+          }
+        }
+      }
+    }
+  
     return true;
-};
+  };
 
 // Task Group Functions
 export const getTaskGroups = async (): Promise<TaskGroup[]> => {
-    const { data, error } = await supabase.from('task_groups').select('*').order('name');
+    const { data, error } = await supabase.from('task_groups').select('*_').order('name');
     if (error) throw error;
     return data;
 };
 
 export const createTaskGroup = async (name: string): Promise<TaskGroup> => {
     const { data, error } = await supabase.from('task_groups').insert({ name }).select().single();
+    if (error) throw error;
+    return data;
+};
+
+// Storage Functions
+export const uploadTaskImage = async (file: File): Promise<string> => {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Math.random()}.${fileExt}`;
+    const filePath = `public/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage.from('task_images').upload(filePath, file);
+
+    if (uploadError) {
+        throw uploadError;
+    }
+
+    const { data } = supabase.storage.from('task_images').getPublicUrl(filePath);
+
+    return data.publicUrl;
+};
+
+export const deleteTaskImage = async (imageUrl: string): Promise<void> => {
+    try {
+      const url = new URL(imageUrl);
+      const bucketName = 'task_images';
+      const pathPrefix = `/storage/v1/object/public/${bucketName}/`;
+  
+      // Ensure pathname uses the expected prefix
+      if (!url.pathname.startsWith(pathPrefix)) {
+        throw new Error('URL does not match expected Supabase storage URL structure.');
+      }
+  
+      // Extract and decode the file path relative to the bucket
+      let filePath = url.pathname.substring(pathPrefix.length);
+      // Remove leading slash if present (defensive)
+      if (filePath.startsWith('/')) filePath = filePath.substring(1);
+      // URL-decode in case the object name contains encoded characters
+      filePath = decodeURIComponent(filePath);
+  
+      const { error } = await supabase.storage.from(bucketName).remove([filePath]);
+  
+      if (error) {
+        console.error(`Supabase storage deletion error for path "${filePath}":`, error);
+        throw error;
+      }
+    } catch (e) {
+      console.error('Error parsing or deleting image from URL:', e);
+      // swallow so task deletion can complete; optionally rethrow if desired
+    }
+  };
+
+
+// Penalty Settings Functions
+export const getPenaltySettings = async (): Promise<PenaltySetting[]> => {
+    const { data, error } = await supabase.from('penalty_settings').select('*_');
+    if (error) throw error;
+    return data;
+};
+
+export const updatePenaltySettings = async (settings: PenaltySetting[]): Promise<PenaltySetting[]> => {
+    const { data, error } = await supabase.from('penalty_settings').upsert(settings).select();
     if (error) throw error;
     return data;
 };

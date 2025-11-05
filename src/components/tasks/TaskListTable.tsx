@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { useState } from 'react';
@@ -15,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Edit, Trash2, MoreVertical, Circle, CircleDotDashed, CheckCircle, Folder } from 'lucide-react';
+import { Edit, Trash2, MoreVertical, Circle, CircleDotDashed, CheckCircle, Folder, Image as ImageIcon, Briefcase, PlusSquare, AlertTriangle, Flag, ArrowRight, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { useSelectedUser } from '@/hooks/useSelectedUser';
 import { deleteTask, updateTask } from '@/lib/supabase/api';
@@ -24,27 +25,31 @@ import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { Checkbox } from '../ui/checkbox';
+import Image from 'next/image';
 
 interface TaskListTableProps {
   tasks: Task[];
   onEdit: (task: Task) => void;
   onDelete: () => void;
   onStatusChange: () => void;
+  onView: (task: Task) => void;
 }
 
 const priorityMap = {
     low: { label: 'Low', color: 'bg-blue-500' },
     medium: { label: 'Medium', color: 'bg-yellow-500' },
     high: { label: 'High', color: 'bg-red-500' },
+    urgent: { label: 'Urgent', color: 'bg-fuchsia-600' },
 };
 
 const statusMap = {
     not_started: { label: 'Not Started', icon: <Circle className="h-4 w-4 text-muted-foreground" /> },
     in_progress: { label: 'In Progress', icon: <CircleDotDashed className="h-4 w-4 text-yellow-500" /> },
     completed: { label: 'Completed', icon: <CheckCircle className="h-4 w-4 text-green-500" /> },
+    undone: { label: 'Undone', icon: <XCircle className="h-4 w-4 text-destructive" /> },
 };
 
-export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange }: TaskListTableProps) {
+export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange, onView }: TaskListTableProps) {
   const { selectedUser } = useSelectedUser();
   const { toast } = useToast();
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
@@ -75,6 +80,8 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
     }
   };
 
+  const showOwnershipColumn = selectedUser?.role !== 'admin';
+
   if (tasks.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center text-center p-12 border-2 border-dashed rounded-lg">
@@ -93,6 +100,8 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
               <TableHead className="w-[50px]">Done</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="min-w-[250px]">Title</TableHead>
+              {showOwnershipColumn && <TableHead>Ownership</TableHead>}
+              <TableHead>Attachments</TableHead>
               <TableHead>Group</TableHead>
               <TableHead>Priority</TableHead>
               <TableHead>Assigned To</TableHead>
@@ -105,14 +114,23 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
                 const statusInfo = statusMap[task.status];
                 const priorityInfo = priorityMap[task.priority];
                 const isModifiable = canModify(task);
+                const isCreator = selectedUser?.id === task.created_by;
+                const isAssignee = selectedUser?.id === task.assigned_to?.id;
 
                 return (
-                    <TableRow key={task.id} className={cn(task.status === 'completed' && 'text-muted-foreground')}>
-                        <TableCell>
+                    <TableRow 
+                        key={task.id} 
+                        className={cn(
+                            "cursor-pointer",
+                            (task.status === 'completed' || task.status === 'undone') && 'text-muted-foreground'
+                        )}
+                        onClick={() => onView(task)}
+                    >
+                        <TableCell onClick={(e) => e.stopPropagation()}>
                             <Checkbox
                                 checked={task.status === 'completed'}
                                 onCheckedChange={(checked) => handleStatusChange(task, !!checked)}
-                                disabled={!isModifiable}
+                                disabled={!isModifiable || task.status === 'undone'}
                                 aria-label="Mark task as complete"
                             />
                         </TableCell>
@@ -127,8 +145,34 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
                             </TooltipProvider>
                         </TableCell>
                         <TableCell className="font-medium">
-                            <span className={cn(task.status === 'completed' && 'line-through')}>{task.title}</span>
+                            <span className={cn((task.status === 'completed' || task.status === 'undone') && 'line-through')}>{task.title}</span>
                             {task.description && <p className="text-xs text-muted-foreground truncate">{task.description}</p>}
+                        </TableCell>
+                         {showOwnershipColumn && (
+                            <TableCell>
+                                {(isCreator || isAssignee) && (
+                                    <TooltipProvider>
+                                        <Tooltip>
+                                            <TooltipTrigger>
+                                                <Badge variant="secondary" className={cn(isCreator ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800')}>
+                                                    {isCreator ? <PlusSquare className="h-4 w-4" /> : <Briefcase className="h-4 w-4" />}
+                                                </Badge>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                                <p>{isCreator ? 'Created by you' : 'Assigned to you'}</p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </TooltipProvider>
+                                )}
+                            </TableCell>
+                        )}
+                        <TableCell>
+                            {task.image_urls && task.image_urls.length > 0 ? (
+                                 <Button variant="outline" size="sm" className="gap-2" onClick={(e) => e.stopPropagation()}>
+                                    <ImageIcon className="h-4 w-4" />
+                                    {task.image_urls.length}
+                                </Button>
+                            ) : null}
                         </TableCell>
                         <TableCell>
                             {task.task_groups ? (
@@ -152,11 +196,17 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
                                                 <Avatar className="h-7 w-7 border-2 border-background">
                                                     <AvatarFallback>{task.assigned_to.name.charAt(0)}</AvatarFallback>
                                                 </Avatar>
+                                                {task.original_assignee && (
+                                                    <>
+                                                        <span className="line-through text-muted-foreground">{task.original_assignee.name.split(' ')[0]}</span>
+                                                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                                                    </>
+                                                )}
                                                 <span>{task.assigned_to.name}</span>
                                             </div>
                                         </TooltipTrigger>
                                         <TooltipContent>
-                                            <p>{task.assigned_to.name}</p>
+                                            <p>{task.original_assignee ? `Reassigned from ${task.original_assignee.name} to ${task.assigned_to.name}` : task.assigned_to.name}</p>
                                         </TooltipContent>
                                     </Tooltip>
                                 </TooltipProvider>
@@ -165,7 +215,7 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
                             )}
                         </TableCell>
                         <TableCell>{task.due_date ? format(new Date(task.due_date), 'MMM d, yyyy') : 'N/A'}</TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                         {isModifiable && (
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -190,7 +240,7 @@ export default function TaskListTable({ tasks, onEdit, onDelete, onStatusChange 
           </TableBody>
         </Table>
       </div>
-      <AlertDialog open={!!taskToDelete} onOpenChange={setTaskToDelete}>
+      <AlertDialog open={!!taskToDelete} onOpenChange={(isOpen) => !isOpen && setTaskToDelete(null)}>
         <AlertDialogContent>
             <AlertDialogHeader>
                 <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
