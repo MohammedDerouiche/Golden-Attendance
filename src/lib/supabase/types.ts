@@ -14,6 +14,7 @@ export type AttendanceStatus = 'present' | 'absent' | 'day_off';
 export type TaskStatus = 'not_started' | 'in_progress' | 'completed' | 'undone';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskRecurrence = 'none' | 'daily' | 'weekly' | 'monthly' | 'custom_days';
+export type DemandStatus = 'new' | 'fulfilled' | 'cancelled';
 
 export interface Database {
   public: {
@@ -178,6 +179,48 @@ export interface Database {
             amount?: number;
         };
       }
+      customer_demands: {
+        Row: {
+          id: string;
+          customer_name: string;
+          customer_phone: string | null;
+          product_description: string;
+          desired_date: string | null;
+          image_url: string | null;
+          status: DemandStatus;
+          category_id: string | null;
+          created_by: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          customer_name: string;
+          customer_phone?: string | null;
+          product_description: string;
+          desired_date?: string | null;
+          image_url?: string | null;
+          status?: DemandStatus;
+          category_id?: string | null;
+          created_by: string;
+        };
+        Update: {
+          status?: DemandStatus;
+        };
+      };
+      demand_categories: {
+          Row: {
+              id: string;
+              name: string;
+              created_at: string;
+          };
+          Insert: {
+              id?: string;
+              name: string;
+          };
+          Update: {
+              name?: string;
+          }
+      };
     }
     Views: {
       [_ in never]: never
@@ -250,10 +293,16 @@ export interface Database {
                 original_task_id: string | null;
                 group_id: string | null;
                 image_urls: string[] | null;
-                original_assignee_id: string | null;
                 allow_delay: boolean;
+                original_assignee_id: string | null;
             }[];
         }
+        delete_demand_and_image: {
+            Args: {
+                demand_id_to_delete: string;
+            };
+            Returns: void;
+        };
     }
     Enums: {
       [_ in never]: never
@@ -290,3 +339,10 @@ export type TaskInsert = Omit<Database['public']['Tables']['tasks']['Insert'], '
 export type TaskUpdate = Database['public']['Tables']['tasks']['Update'];
 
 export type PenaltySetting = Database['public']['Tables']['penalty_settings']['Row'];
+
+export type DemandCategory = Database['public']['Tables']['demand_categories']['Row'];
+export type CustomerDemand = Database['public']['Tables']['customer_demands']['Row'] & {
+    created_by_user: Pick<User, 'id' | 'name'> | null;
+    category: Pick<DemandCategory, 'id' | 'name'> | null;
+};
+export type CustomerDemandInsert = Database['public']['Tables']['customer_demands']['Insert'];

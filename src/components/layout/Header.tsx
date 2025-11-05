@@ -6,7 +6,7 @@ import { useSelectedUser } from '@/hooks/useSelectedUser';
 import UserSelector from '@/components/UserSelector';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { Clock as ClockIcon, Menu, Home, History, DollarSign, BarChart, Settings, Users, Activity, ListChecks } from 'lucide-react';
+import { Clock as ClockIcon, Menu, Home, History, DollarSign, BarChart, Settings, Users, Activity, ListChecks, ShoppingCart } from 'lucide-react';
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import AddUserForm from '../AddUserForm';
@@ -96,6 +96,7 @@ export default function Header() {
                                 <NavLink href="/active" onNavigate={handleNavLinkClick}><Activity /> Active Employees</NavLink>
                             </>
                          )}
+                        <NavLink href="/demands" onNavigate={handleNavLinkClick}><ShoppingCart /> Demands</NavLink>
                         <NavLink href="/history" onNavigate={handleNavLinkClick}><History /> History</NavLink>
                         <NavLink href="/tasks" onNavigate={handleNavLinkClick}><ListChecks /> Tasks</NavLink>
                         <NavLink href="/salary" onNavigate={handleNavLinkClick}><DollarSign /> Salary</NavLink>

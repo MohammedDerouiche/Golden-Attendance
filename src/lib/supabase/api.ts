@@ -1,7 +1,7 @@
 
 
 import { supabase } from './client';
-import type { UserInsert, UserUpdate, AttendanceInsert, AttendanceUpdate, Attendance, ActiveEmployee, Task, TaskInsert, TaskUpdate, TaskStatus, TaskPriority, TaskRecurrence, User, TaskGroup, PenaltySetting } from './types';
+import type { UserInsert, UserUpdate, AttendanceInsert, AttendanceUpdate, Attendance, ActiveEmployee, Task, TaskInsert, TaskUpdate, TaskStatus, TaskPriority, TaskRecurrence, User, TaskGroup, PenaltySetting, CustomerDemand, CustomerDemandInsert, DemandCategory } from './types';
 import { startOfDay, endOfDay, addDays, addWeeks, addMonths, startOfMonth, endOfMonth, isFriday, eachDayOfInterval as fnsEachDayOfInterval } from 'date-fns';
 import type { DateRange } from 'react-day-picker';
 
@@ -425,51 +425,69 @@ export const updateTask = async (taskId: string, taskData: TaskUpdate) => {
 };
 
 export const deleteTask = async (taskId: string) => {
-    // First, get the image URLs for the task being deleted.
-    const { data: taskData, error: fetchError } = await supabase
-      .from('tasks')
-      .select('image_urls')
-      .eq('id', taskId)
-      .single();
-  
-    if (fetchError && fetchError.code !== 'PGRST116') { // Ignore "single row not found" error
-      console.error('Error fetching task for deletion:', fetchError);
-      throw fetchError;
+    // Step 1: Fetch the task to get its image URLs
+    const { data: task, error: fetchError } = await supabase
+        .from('tasks')
+        .select('image_urls')
+        .eq('id', taskId)
+        .single();
+
+    if (fetchError) {
+        console.error('Error fetching task for deletion:', fetchError);
+        throw fetchError;
     }
-  
-    // Now, delete the task itself.
+
+    const imageUrls = task?.image_urls;
+
+    // Step 2: Delete the task record from the database
     const { error: deleteError } = await supabase.from('tasks').delete().eq('id', taskId);
     if (deleteError) {
-      console.error('Error deleting task:', deleteError);
-      throw deleteError;
+        console.error('Error deleting task from database:', deleteError);
+        throw deleteError;
     }
-  
-    // If the task had images, check if they are used elsewhere before deleting from storage.
-    if (taskData?.image_urls && taskData.image_urls.length > 0) {
-      for (const imageUrl of taskData.image_urls) {
-        // Check if any other task uses this image URL.
-        const { count, error: countError } = await supabase
-          .from('tasks')
-          .select('id', { count: 'exact', head: true })
-          .contains('image_urls', [imageUrl]);
-  
-        if (countError) {
-          console.error(`Error checking image usage for ${imageUrl}:`, countError);
-          continue;
+    
+    // Step 3: If images exist, check if they are still used by other tasks
+    if (imageUrls && imageUrls.length > 0) {
+        // For each URL, check if any other task uses it
+        const { data: otherTasks, error: checkError } = await supabase
+            .from('tasks')
+            .select('id')
+            .contains('image_urls', imageUrls);
+
+        if (checkError) {
+            console.error('Error checking for other tasks with same image:', checkError);
+            // Don't throw, proceed with caution. The task is deleted, but image might be orphaned.
+            return true;
         }
-  
-        if (count === 0) {
-          try {
-            await deleteTaskImage(imageUrl);
-          } catch (storageError) {
-            console.error(`Failed to delete image ${imageUrl} from storage:`, storageError);
-          }
+
+        // If no other tasks use these images, delete them from storage
+        if (otherTasks && otherTasks.length === 0) {
+            const bucketName = 'task_images';
+            const filePaths = imageUrls.map(url => {
+                try {
+                    const urlParts = new URL(url);
+                    // public/1716570753066.jpeg -> 1716570753066.jpeg
+                    const path = decodeURIComponent(urlParts.pathname).split('/').pop() || '';
+                    return `public/${path}`;
+                } catch (e) {
+                    console.error('Invalid image URL, skipping deletion:', url);
+                    return null;
+                }
+            }).filter((p): p is string => p !== null);
+
+            if (filePaths.length > 0) {
+                const { error: storageError } = await supabase.storage.from(bucketName).remove(filePaths);
+                if (storageError) {
+                    // Log the error but don't throw, as the main task record was already deleted.
+                    console.error('Error deleting images from storage:', storageError);
+                }
+            }
         }
-      }
     }
-  
+
     return true;
-  };
+};
+
 
 // Task Group Functions
 export const getTaskGroups = async (): Promise<TaskGroup[]> => {
@@ -487,7 +505,7 @@ export const createTaskGroup = async (name: string): Promise<TaskGroup> => {
 // Storage Functions
 export const uploadTaskImage = async (file: File): Promise<string> => {
     const fileExt = file.name.split('.').pop();
-    const fileName = `${Math.random()}.${fileExt}`;
+    const fileName = `${Date.now()}.${fileExt}`;
     const filePath = `public/${fileName}`;
 
     const { error: uploadError } = await supabase.storage.from('task_images').upload(filePath, file);
@@ -501,37 +519,6 @@ export const uploadTaskImage = async (file: File): Promise<string> => {
     return data.publicUrl;
 };
 
-export const deleteTaskImage = async (imageUrl: string): Promise<void> => {
-    try {
-      const url = new URL(imageUrl);
-      const bucketName = 'task_images';
-      const pathPrefix = `/storage/v1/object/public/${bucketName}/`;
-  
-      // Ensure pathname uses the expected prefix
-      if (!url.pathname.startsWith(pathPrefix)) {
-        throw new Error('URL does not match expected Supabase storage URL structure.');
-      }
-  
-      // Extract and decode the file path relative to the bucket
-      let filePath = url.pathname.substring(pathPrefix.length);
-      // Remove leading slash if present (defensive)
-      if (filePath.startsWith('/')) filePath = filePath.substring(1);
-      // URL-decode in case the object name contains encoded characters
-      filePath = decodeURIComponent(filePath);
-  
-      const { error } = await supabase.storage.from(bucketName).remove([filePath]);
-  
-      if (error) {
-        console.error(`Supabase storage deletion error for path "${filePath}":`, error);
-        throw error;
-      }
-    } catch (e) {
-      console.error('Error parsing or deleting image from URL:', e);
-      // swallow so task deletion can complete; optionally rethrow if desired
-    }
-  };
-
-
 // Penalty Settings Functions
 export const getPenaltySettings = async (): Promise<PenaltySetting[]> => {
     const { data, error } = await supabase.from('penalty_settings').select('*_');
@@ -543,4 +530,123 @@ export const updatePenaltySettings = async (settings: PenaltySetting[]): Promise
     const { data, error } = await supabase.from('penalty_settings').upsert(settings).select();
     if (error) throw error;
     return data;
+};
+
+// Customer Demand Functions
+export const getDemandCategories = async (): Promise<DemandCategory[]> => {
+    const { data, error } = await supabase.from('demand_categories').select('*').order('name');
+    if (error) throw error;
+    return data;
+};
+
+export const createCategory = async (name: string): Promise<DemandCategory> => {
+    const { data, error } = await supabase.from('demand_categories').insert({ name }).select().single();
+    if (error) throw error;
+    return data;
+}
+
+export const deleteCategory = async (categoryId: string): Promise<void> => {
+    const { error } = await supabase.from('demand_categories').delete().eq('id', categoryId);
+    if (error) throw error;
+}
+
+export const getDemands = async (status: 'all' | 'new' | 'fulfilled' | 'cancelled', categoryId: string): Promise<CustomerDemand[]> => {
+    let query = supabase
+        .from('customer_demands')
+        .select('*, created_by_user:users(id, name), category:demand_categories(id, name)')
+        .order('created_at', { ascending: false });
+
+    if (status !== 'all') {
+        query = query.eq('status', status);
+    }
+    if (categoryId !== 'all') {
+        query = query.eq('category_id', categoryId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data as any;
+};
+
+export const createDemand = async (demandData: CustomerDemandInsert): Promise<CustomerDemand> => {
+    const { data, error } = await supabase.from('customer_demands').insert(demandData).select().single();
+    if (error) throw error;
+    return data;
+};
+
+export const updateDemand = async (demandId: string, demandData: Partial<CustomerDemandInsert>): Promise<CustomerDemand> => {
+    const { data, error } = await supabase.from('customer_demands').update(demandData).eq('id', demandId).select().single();
+    if (error) throw error;
+    return data;
+}
+
+export const updateDemandStatus = async (demandId: string, status: 'new' | 'fulfilled' | 'cancelled'): Promise<CustomerDemand> => {
+    const { data, error } = await supabase
+        .from('customer_demands')
+        .update({ status })
+        .eq('id', demandId)
+        .select()
+        .single();
+    if (error) throw error;
+    return data;
+};
+
+
+export const deleteDemand = async (demandId: string): Promise<void> => {
+    // Step 1: Get the demand details to find the image URL
+    const { data: demand, error: fetchError } = await supabase
+        .from('customer_demands')
+        .select('image_url')
+        .eq('id', demandId)
+        .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') { // Ignore "row not found" error
+        console.error('Error fetching demand for deletion:', fetchError);
+        throw fetchError;
+    }
+    
+    // Step 2: If an image URL exists, delete the image from storage first
+    if (demand?.image_url) {
+        try {
+            const bucketName = 'demand_images';
+            const url = new URL(demand.image_url);
+            // Path is /{bucketName}/{demandId}/{fileName}
+            const filePath = decodeURIComponent(url.pathname.substring(url.pathname.indexOf(`/${bucketName}/`) + bucketName.length + 2));
+            
+            if (filePath) {
+                 await supabase.storage.from(bucketName).remove([filePath]);
+            }
+        } catch (storageError) {
+             // Log the error but don't throw, as the main record deletion should still proceed.
+            console.error('Error deleting image from storage:', storageError);
+        }
+    }
+
+    // Step 3: Delete the demand record from the database
+    const { error: deleteError } = await supabase
+        .from('customer_demands')
+        .delete()
+        .eq('id', demandId);
+
+    if (deleteError) {
+        console.error('Error deleting demand from database:', deleteError);
+        throw deleteError;
+    }
+};
+
+export const uploadDemandImage = async (file: File, demandId: string): Promise<string> => {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Date.now()}.${fileExt}`;
+    // Organize images in a folder named after the demand ID
+    const filePath = `${demandId}/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage.from('demand_images').upload(filePath, file);
+
+    if (uploadError) {
+        throw uploadError;
+    }
+
+    const { data } = supabase.storage.from('demand_images').getPublicUrl(filePath);
+
+    return data.publicUrl;
 };
